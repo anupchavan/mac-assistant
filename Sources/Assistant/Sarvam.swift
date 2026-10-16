@@ -88,6 +88,8 @@ final class SarvamSTT: NSObject, URLSessionWebSocketDelegate {
     private var finalWaiters: [CheckedContinuation<(String, String?), Never>] = []
     private var lastPartial = ""
     private var speechStarted = false
+    private var opened = false
+    private var outbox: [[String: Any]] = []     // sent before the socket opened; flushed in order on open
     private let queue = DispatchQueue(label: "stt")
 
     func connect() {
@@ -124,7 +126,10 @@ final class SarvamSTT: NSObject, URLSessionWebSocketDelegate {
 
     /// End of the user's turn: ask for the final transcript and wait for it (or fall back to REST).
     func finish(timeout: TimeInterval = 3) async -> (String, String?) {
+        // Give a slow handshake a moment; after that, the REST fallback has all the audio anyway.
+        for _ in 0..<15 where !queue.sync(execute: { opened || failed }) { try? await Task.sleep(nanoseconds: 100_000_000) }
         queue.sync {
+            if !opened { failed = true }
             if !failed { sendJSON(["event": "speech_end"]) }
         }
         if queue.sync(execute: { failed }) { return await restFallback() }
@@ -153,7 +158,10 @@ final class SarvamSTT: NSObject, URLSessionWebSocketDelegate {
         session?.finishTasksAndInvalidate()
     }
 
+    /// Call on `queue`. The mic starts streaming at fn-down, before the handshake finishes; sending on an
+    /// unopened socket fails with "Socket is not connected", so those messages wait in the outbox.
     private func sendJSON(_ obj: [String: Any]) {
+        guard opened else { outbox.append(obj); return }
         guard let task, let data = try? JSONSerialization.data(withJSONObject: obj), let s = String(data: data, encoding: .utf8) else { return }
         task.send(.string(s)) { [weak self] err in
             if let err { self?.markFailed("send: \(err.localizedDescription)") }
@@ -165,7 +173,8 @@ final class SarvamSTT: NSObject, URLSessionWebSocketDelegate {
             guard let self else { return }
             switch result {
             case .failure(let err):
-                self.markFailed(err.localizedDescription)
+                // After we close the socket ourselves, the pending receive fails too; that's not a failure.
+                if self.queue.sync(execute: { self.task != nil }) { self.markFailed(err.localizedDescription) }
             case .success(let msg):
                 if case let .string(s) = msg { self.handle(s) }
                 self.receive()
@@ -173,7 +182,10 @@ final class SarvamSTT: NSObject, URLSessionWebSocketDelegate {
         }
     }
 
+    static var debug = false
+
     private func handle(_ s: String) {
+        if Self.debug { Log.info("stt ← \(s.prefix(240))") }
         guard let data = s.data(using: .utf8), let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
         let event = obj["event"] as? String ?? obj["type"] as? String ?? ""
         let payload = (obj["data"] as? [String: Any]) ?? obj
@@ -212,6 +224,15 @@ final class SarvamSTT: NSObject, URLSessionWebSocketDelegate {
             Log.error("stt socket failed (\(why)); will use REST")
             let waiters = finalWaiters; finalWaiters.removeAll()
             for w in waiters { w.resume(returning: ("", nil)) }
+        }
+    }
+
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+        if Self.debug { Log.info("stt socket open") }
+        queue.async { [self] in
+            opened = true
+            let pending = outbox; outbox.removeAll()
+            for m in pending { sendJSON(m) }
         }
     }
 

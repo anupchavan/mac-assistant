@@ -84,6 +84,29 @@ enum Probe {
             // Draws the real panel views with fixture state into windows that are never shown, and saves PNGs (2x).
             let dir = URL(fileURLWithPath: rest.first ?? NSTemporaryDirectory())
             await MainActor.run { RenderProbe.run(into: dir) }
+        case "stt-ws":
+            // Speech made by Sarvam TTS (REST, 16 kHz) streamed into our realtime STT socket like the mic would.
+            SarvamSTT.debug = true
+            let text = rest.first ?? "Can you close this tab?"
+            var req = URLRequest(url: Sarvam.base.appendingPathComponent("text-to-speech"))
+            req.httpMethod = "POST"
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.setValue(try Sarvam.key(), forHTTPHeaderField: "api-subscription-key")
+            req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text, "target_language_code": "en-IN", "model": "bulbul:v3",
+                                                                       "speaker": "shubh", "speech_sample_rate": 16000])
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let b64 = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["audios"] as? [String], let first = b64.first,
+                  var pcm = Data(base64Encoded: first) else { print("tts failed: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "")"); return }
+            if pcm.prefix(4) == "RIFF".data(using: .ascii)! { pcm = pcm.subdata(in: 44..<pcm.count) }
+            print("speech: \(pcm.count / 32000) s")
+            let stt = SarvamSTT()
+            stt.connect()       // no wait: audio starts before the handshake, as with the mic
+            var i = 0
+            while i < pcm.count { stt.send(pcm.subdata(in: i..<min(i + 3200, pcm.count))); i += 3200; try await Task.sleep(nanoseconds: 100_000_000) }
+            let t0 = Date()
+            let (heard, lang) = await stt.finish()
+            print(String(format: "final after %.0f ms: \"%@\" (%@)", Date().timeIntervalSince(t0) * 1000, heard, lang ?? "?"))
         case "cua-plan":
             // The first real computer-use step for a task on the front window, never executed. Screenshot
             // requests are answered (harmless) until the model plans something else; that is printed with

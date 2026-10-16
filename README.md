@@ -89,5 +89,7 @@ $B --probe handoff "block this user"   # computer-use instruction only, never cl
 $B --probe gesture         # fn timelines through the state machine
 $B --probe agent "close this tab" [v1]   # which tool the model picks (never runs it)
 $B --probe cua-access     # can this OpenAI key use the computer-use models?
+$B --probe cua-plan "block this user"   # the first real step computer use would take (never executed)
+$B --probe stt-ws "close this tab"     # TTS speech streamed into the realtime STT socket (no mic)
 $B --probe render <dir>   # offscreen PNGs of the panel states (nothing appears on screen)
 ```
