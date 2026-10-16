@@ -84,6 +84,50 @@ enum Probe {
             // Draws the real panel views with fixture state into windows that are never shown, and saves PNGs (2x).
             let dir = URL(fileURLWithPath: rest.first ?? NSTemporaryDirectory())
             await MainActor.run { RenderProbe.run(into: dir) }
+        case "cua-plan":
+            // The first real computer-use step for a task on the front window, never executed. Screenshot
+            // requests are answered (harmless) until the model plans something else; that is printed with
+            // where it would land on screen and the accessibility label there.
+            guard let key = Keys.openAI else { print("OpenAI key: missing"); return }
+            let ctx = await ContextCapture.capture()
+            guard let first = await ContextCapture.screenshot(pid: ctx.pid), let url = ContextCapture.pngDataURL(first.0) else { print("no screenshot"); return }
+            let task = rest.first ?? "Block the user whose profile is open"
+            let model = Keys.setting("ASSISTANT_CUA_MODEL", default: "gpt-6-astra")
+            print("window \(ctx.appName) frame \(first.1), image \(first.0.width)×\(first.0.height)")
+            var body: [String: Any] = ["model": model, "tools": [["type": "computer"]], "reasoning": ["effort": "low"],
+                                       "instructions": Prompts.astraInstructions, "truncation": "auto",
+                                       "input": [["role": "user", "content": [["type": "input_text", "text": task],
+                                                  ["type": "input_image", "image_url": url, "detail": "original"]]]]]
+            let t0 = Date()
+            rounds: for round in 1...4 {
+                let r: [String: Any]
+                do { r = try await ComputerUser.post(body, key: key) } catch let e as APIError { print("HTTP \(e.status), \(e.sanitizedMessage)"); return }
+                var outputs: [[String: Any]] = []
+                for item in r["output"] as? [[String: Any]] ?? [] {
+                    let type = item["type"] as? String ?? "?"
+                    if type == "message" {
+                        print("  round \(round) message: \((item["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined().prefix(300) ?? "")")
+                    } else if type == "computer_call" {
+                        let acts = (item["actions"] as? [[String: Any]]) ?? (item["action"] as? [String: Any]).map { [$0] } ?? []
+                        let real = acts.filter { ($0["type"] as? String) != "screenshot" }
+                        if !real.isEmpty {
+                            for a in real {
+                                let x = (a["x"] as? NSNumber)?.doubleValue ?? -1, y = (a["y"] as? NSNumber)?.doubleValue ?? -1
+                                let p = ComputerUser.map(x, y, windowFrame: first.1, imageSize: CGSize(width: first.0.width, height: first.0.height))
+                                print("  round \(round) would do: \(a["type"] ?? "?") at image (\(Int(x)), \(Int(y))) → screen \(p.map { "(\(Int($0.x)), \(Int($0.y)))" } ?? "outside window"), target label: \(p.flatMap { ComputerUser.label(at: $0) } ?? "none")")
+                            }
+                            break rounds
+                        }
+                        print("  round \(round): screenshot requested")
+                        outputs.append(["type": "computer_call_output", "call_id": item["call_id"] as? String ?? "",
+                                        "output": ["type": "computer_screenshot", "image_url": url, "detail": "original"]])
+                    }
+                }
+                guard !outputs.isEmpty, let id = r["id"] as? String else { break }
+                body["previous_response_id"] = id
+                body["input"] = outputs
+            }
+            print(String(format: "— %.0f ms, nothing executed", Date().timeIntervalSince(t0) * 1000))
         case "cua-access":
             // One text-only Responses request per computer-use model; no screenshot, nothing executed.
             guard let key = Keys.openAI else { print("OpenAI key: missing"); return }

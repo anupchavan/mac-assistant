@@ -11,7 +11,8 @@ final class ComputerUser {
         var spokenTemplate: String
     }
 
-    enum Outcome { case done(String), stopped(String), failed(String) }
+    /// `done` carries the model's own words and how many actions it actually took.
+    enum Outcome { case done(String, actions: Int), stopped(String), failed(String) }
 
     static let maxActions = 15
     static let maxSeconds: TimeInterval = 90
@@ -98,7 +99,8 @@ final class ComputerUser {
                     guard (item["type"] as? String) == "message" else { return nil }
                     return (item["content"] as? [[String: Any]])?.compactMap { $0["text"] as? String }.joined()
                 }.joined(separator: " ")
-                return .done(text.isEmpty ? "Done." : text)
+                Log.info("cua \(model) finished after \(actions) action(s): \(text.prefix(160))")
+                return .done(text, actions: actions)
             }
             var outputs: [[String: Any]] = []
             for call in calls {
@@ -108,6 +110,7 @@ final class ComputerUser {
                 for act in acts {
                     if stopRequested { return .stopped(stopReason) }
                     actions += 1
+                    Log.info("cua action \(actions): \(act["type"] as? String ?? "?")")
                     if actions > Self.maxActions { return .stopped("too many steps") }
                     let (ok, why) = await execute(act, windowFrame: shot.1, imageSize: CGSize(width: shot.0.width, height: shot.0.height))
                     if !ok { return .stopped(why) }

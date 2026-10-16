@@ -604,8 +604,13 @@ final class AppModel: ObservableObject {
         controller?.hidePill()
         show()
         switch outcome {
-        case .done(let text):
-            appendAnswer(handoff.spokenTemplate.isEmpty ? text : handoff.spokenTemplate, voice: voice)
+        case .done(let text, let actions):
+            // Never claim success the agent didn't earn: with no actions, say what it said instead.
+            if actions == 0 {
+                appendAnswer(text.isEmpty ? "I couldn't do that on screen." : "I didn't do it: \(text)", voice: voice)
+            } else {
+                appendAnswer(handoff.spokenTemplate.isEmpty ? (text.isEmpty ? "Done." : text) : handoff.spokenTemplate, voice: voice)
+            }
         case .stopped(let why):
             appendAnswer("Stopped: \(why).", voice: voice)
         case .failed(let why):
