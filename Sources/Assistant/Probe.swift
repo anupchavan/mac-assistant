@@ -303,6 +303,14 @@ enum RenderProbe {
         m.chats = [thread]; m.chatIndex = 0; m.overlay = .actions; m.selection = 1; m.filter = ""
         var ph: CGFloat = 0
         save(ActionsPopover(onHeight: { ph = $0 }).environmentObject(m), width: Grid.popoverWidth, name: "7-popover", dir: dir, height: { ph })
+        // The ⌘K card exactly as the app wraps it (masked blur container), to catch layout bugs in the wrapper.
+        let wrapped = NSHostingView(rootView: ActionsPopover(onHeight: { _ in }).environmentObject(m))
+        wrapped.sizingOptions = []
+        let card = PanelController.glass(around: wrapped, radius: Grid.popoverRadius, liquid: false)
+        let cw = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: Grid.popoverWidth, height: ph), styleMask: .borderless, backing: .buffered, defer: false)
+        cw.contentView = card
+        for _ in 0..<3 { card.layoutSubtreeIfNeeded(); RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
+        print("wrapped card: content \(Int(wrapped.frame.width))×\(Int(wrapped.frame.height)) in window \(Int(ph))")
         m.filter = "chat"
         save(ActionsPopover(onHeight: { ph = $0 }).environmentObject(m), width: Grid.popoverWidth, name: "8-popover-search", dir: dir, height: { ph })
         save(SettingsView {}, width: 440, name: "9-settings", dir: dir, height: { 0 })

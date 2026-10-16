@@ -192,6 +192,7 @@ final class PanelController {
         blur.state = .active
         blur.maskImage = roundedMask(radius: radius)
         blur.translatesAutoresizingMaskIntoConstraints = false
+        content.translatesAutoresizingMaskIntoConstraints = false   // pinned by the constraints below
         container.addSubview(blur)
         container.addSubview(content)
         for v in [blur, content] {
