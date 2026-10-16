@@ -30,7 +30,7 @@ Keys are never logged or shown back.
 
 Optional overrides (environment or `~/.zshrc`): `ASSISTANT_STT_MODEL` (saaras:v4), `ASSISTANT_VISION_MODEL` (gemma4),
 `ASSISTANT_DEEP_MODEL` (sarvam-105b), `ASSISTANT_TTS_MODEL` (bulbul:v3), `ASSISTANT_TTS_SPEAKER` (shubh),
-`ASSISTANT_TTS_PACE` (0.9; Settings → Voice speed wins), `ASSISTANT_CUA_MODEL` (gpt-6-astra), `ASSISTANT_CUA_FALLBACK_MODEL` (gpt-6.1-sol),
+`ASSISTANT_TTS_PACE` (1.0; Settings → Voice speed wins), `ASSISTANT_CUA_MODEL` (gpt-6-astra), `ASSISTANT_CUA_FALLBACK_MODEL` (gpt-6.1-sol),
 `ASSISTANT_SIGN_IDENTITY` (codesign identity for make-app.sh).
 
 ## First run: permissions

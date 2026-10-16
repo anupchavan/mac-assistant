@@ -47,9 +47,9 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Voice speed").font(Fonts.bodyStrong).foregroundStyle(Theme.textPrimary)
                 Picker("", selection: $pace) {
-                    Text("Slower").tag(0.8)
-                    Text("Normal").tag(0.9)
-                    Text("Faster").tag(1.05)
+                    Text("Slower").tag(0.9)
+                    Text("Normal").tag(1.0)
+                    Text("Faster").tag(1.15)
                 }
                 .pickerStyle(.segmented).labelsHidden()
                 .onChange(of: pace) { _, v in UserDefaults.standard.set(v, forKey: "ttsPace") }
