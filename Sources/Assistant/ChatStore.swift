@@ -18,6 +18,8 @@ struct Turn: Codable, Identifiable, Equatable {
     var error: String?
     /// "Now looking at Chrome · arxiv.org" when the app changed since the previous turn.
     var divider: String?
+    /// What the turn was about that later turns can't see on screen any more (selected file paths, the URL).
+    var contextNote: String?
 
     /// What the model should remember: only what was actually heard or shown.
     var rememberedAnswer: String {

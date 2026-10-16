@@ -12,7 +12,7 @@ struct ToolCall: Identifiable {
     /// Needs a confirm card before running (changes or creates data, or a shortcut that can lose work).
     var needsConfirm: Bool {
         if name == "press_shortcut" { return Tools.isDestructive(shortcut: string("keys")) }
-        return ["create_event", "create_reminder", "move_files", "run_shortcut", "insert_text"].contains(name)
+        return ["create_event", "create_reminder", "move_files", "run_shortcut", "insert_text", "trim_and_merge_videos"].contains(name)
     }
 
     /// Verb + object for the confirm card's ↵ button, never "OK".
@@ -22,6 +22,7 @@ struct ToolCall: Identifiable {
         case "create_reminder": return "Add Reminder"
         case "move_files": return "Move Files"
         case "run_shortcut": return "Run Shortcut"
+        case "trim_and_merge_videos": return "Make Video"
         case "insert_text": return "Insert"
         case "press_shortcut": return "Press \(Tools.symbols(string("keys")))"
         default: return "Run"
@@ -36,6 +37,9 @@ struct ToolCall: Identifiable {
             let n = (arguments["paths"] as? [String])?.count ?? 0
             return "Move \(n) file\(n == 1 ? "" : "s") to \((string("destination") as NSString).lastPathComponent)"
         case "run_shortcut": return "Run the shortcut “\(string("name"))”"
+        case "trim_and_merge_videos":
+            let n = (arguments["clips"] as? [[String: Any]])?.count ?? 0
+            return n > 1 ? "Join \(n) videos into one" : "Trim the video"
         case "insert_text": return "Insert text into \(string("app").isEmpty ? "the focused field" : string("app"))"
         case "press_shortcut": return "Press \(Tools.symbols(string("keys")))\(string("app").isEmpty ? "" : " in \(string("app"))")"
         default: return name
@@ -50,6 +54,14 @@ struct ToolCall: Identifiable {
         case "create_reminder": return Tools.humanDate(string("due"))
         case "move_files": return string("destination")
         case "insert_text": return String(string("text").prefix(160))
+        case "trim_and_merge_videos":
+            return ((arguments["clips"] as? [[String: Any]]) ?? []).map { c in
+                let name = ((c["path"] as? String ?? "") as NSString).lastPathComponent
+                let s = Media.seconds(c["start"]), e = Media.seconds(c["end"])
+                func t(_ x: Double) -> String { String(format: "%d:%02d", Int(x) / 60, Int(x) % 60) }
+                let range = s == nil && e == nil ? "whole" : "\(t(s ?? 0))–\(e.map(t) ?? "end")"
+                return "\(name) (\(range))"
+            }.joined(separator: " → ")
         default: return string("input")
         }
     }
@@ -65,6 +77,7 @@ struct ToolCall: Identifiable {
         case "create_reminder": return "Adding the reminder"
         case "move_files": return "Moving files"
         case "run_shortcut": return "Running \(string("name"))"
+        case "trim_and_merge_videos": return "Making the video"
         case "insert_text": return "Inserting"
         case "press_shortcut": return "Pressing \(Tools.symbols(string("keys")))"
         case "use_computer": return "Working out what to click"
@@ -92,6 +105,9 @@ enum Tools {
             fn("move_files", "Move files to a folder, creating it if needed",
                ["paths": ["type": "array", "items": s], "destination": s], ["paths", "destination"]),
             fn("run_shortcut", "Run a Shortcuts shortcut by name", ["name": s, "input": s], ["name"]),
+            fn("trim_and_merge_videos", "Trim videos and/or join them one after another into a new .mov (original files untouched). Use FINDER_SELECTION paths. start/end are times within each clip, as seconds or m:ss; omit both to keep the whole clip. \"Keep the first 9:35\" means end 9:35.",
+               ["clips": ["type": "array", "items": ["type": "object", "properties": ["path": s, "start": s, "end": s], "required": ["path"]]],
+                "output": ["type": "string", "description": "Optional output path; default is next to the first clip"]], ["clips"]),
             fn("press_shortcut", "Press a keyboard shortcut in an app (default: the app the user is in). Use it for anything a shortcut does: close this tab cmd+w, new tab cmd+t, reopen closed tab cmd+shift+t, reload cmd+r, go back cmd+[, go forward cmd+], find cmd+f, select all cmd+a, undo cmd+z, redo cmd+shift+z, zoom in cmd+plus, zoom out cmd+minus, full screen ctrl+cmd+f, minimize cmd+m, hide cmd+h, new window cmd+n, close window cmd+shift+w, quit cmd+q, scroll down space or pagedown.",
                ["keys": ["type": "string", "description": "Keys joined with +, e.g. cmd+w, cmd+shift+t, ctrl+cmd+f"],
                 "app": ["type": "string", "description": "App name; omit for the app the user is in"]], ["keys"]),
@@ -210,6 +226,15 @@ enum Tools {
                     moved += 1
                 }
                 return "moved \(moved) files"
+            case "trim_and_merge_videos":
+                let clips = ((call.arguments["clips"] as? [[String: Any]]) ?? []).map {
+                    Media.Clip(url: URL(fileURLWithPath: (($0["path"] as? String ?? "") as NSString).expandingTildeInPath),
+                               start: Media.seconds($0["start"]), end: Media.seconds($0["end"]))
+                }
+                let out = call.string("output").isEmpty ? nil : URL(fileURLWithPath: (call.string("output") as NSString).expandingTildeInPath)
+                let r = try await Media.trimAndMerge(clips, output: out)
+                await MainActor.run { NSWorkspace.shared.activateFileViewerSelecting([r.url]) }
+                return String(format: "saved %@ (%d:%02d long), revealed in Finder", r.url.path, Int(r.seconds) / 60, Int(r.seconds) % 60)
             case "run_shortcut":
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")

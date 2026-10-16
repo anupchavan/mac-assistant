@@ -69,7 +69,7 @@ panel appears → release → `speech_end` → final transcript → rule-pass ro
 - **fast**: gemma4 on `/v2` with the screenshot (falls back to on-device Vision OCR + sarvam-105b if the
   key isn't whitelisted for V2; the menu toggle "Use screenshots with gemma4" shows the state)
 - **deep**: sarvam-105b, reasoning high
-- **agent**: same plus tools (calendar, reminders, open, insert, move files, shortcuts); data-changing
+- **agent**: same plus tools (calendar, reminders, open, insert, move files, shortcuts, keyboard shortcuts, trim and join videos); data-changing
   tools show a confirm card first
 - **computer**: sarvam-105b writes one instruction → confirm → OpenAI Responses `computer` loop with a
   CGEvent executor; a pill shows each step; Esc or moving the mouse stops it
@@ -93,5 +93,7 @@ $B --probe agent "close this tab" [v1]   # which tool the model picks (never run
 $B --probe cua-access     # can this OpenAI key use the computer-use models?
 $B --probe cua-plan "block this user"   # the first real step computer use would take (never executed)
 $B --probe stt-ws "close this tab"     # TTS speech streamed into the realtime STT socket (no mic)
+$B --probe media-test <dir>          # trim + join two synthetic clips with the video tool
+$B --probe agent-fixture "<ask>"    # which tool the model picks for an ask in a fixed Finder context
 $B --probe render <dir>   # offscreen PNGs of the panel states (nothing appears on screen)
 ```

@@ -87,6 +87,7 @@ final class RouterTests: XCTestCase {
         XCTAssertEqual(Router.route("isko band karo", app: "Safari", computerUseAvailable: true), .agent)
         XCTAssertEqual(Router.route("go back", app: "Safari", computerUseAvailable: true), .agent)
         XCTAssertNotEqual(Router.route("Click.", app: "Safari", computerUseAvailable: true), .computer)
+        XCTAssertEqual(Router.route("from the first keep like 09:35 and merge both videos", app: "Finder", computerUseAvailable: true), .agent)
     }
     func testSpeechCleaning() {
         XCTAssertEqual(AppModel.cleanForSpeech("**Bold** see https://x.com/a now"), "Bold see the link now")

@@ -23,6 +23,8 @@ final class ComputerUser {
     weak var monitor: HotkeyMonitor?
 
     private var inflight: Task<[String: Any], Error>?
+    /// True once the agent has done something on screen (not just looked). Before that, your mouse is yours.
+    private(set) var hasActed = false
 
     /// Esc / mouse: takes effect immediately, including while waiting for the model (the request is cancelled).
     func stop(_ reason: String) {
@@ -126,6 +128,7 @@ final class ComputerUser {
                 for act in acts {
                     if stopRequested { return .stopped(stopReason) }
                     actions += 1
+                    if (act["type"] as? String) != "screenshot" { hasActed = true }
                     Log.info("cua action \(actions): \(act["type"] as? String ?? "?")")
                     if actions > Self.maxActions { return .stopped("too many steps") }
                     let (ok, why) = await execute(act, windowFrame: shot.1, imageSize: CGSize(width: shot.0.width, height: shot.0.height))

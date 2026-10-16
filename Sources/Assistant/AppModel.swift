@@ -348,6 +348,8 @@ final class AppModel: ObservableObject {
             let prev = chats[chatIndex].turns.last
             var turn = Turn(ask: ask, language: language, app: ctx.appName, appLabel: ctx.label, bundleID: ctx.bundleID, voice: voice)
             if let prev, prev.appLabel != ctx.label { turn.divider = "Now looking at \(ctx.label)" }
+            if !ctx.finderSelection.isEmpty { turn.contextNote = "FINDER_SELECTION then:\n" + ctx.finderSelection.prefix(20).joined(separator: "\n") }
+            else if !ctx.browserURL.isEmpty { turn.contextNote = "BROWSER then: \(ctx.browserURL)" }
             chats[chatIndex].turns.append(turn)
             chats[chatIndex].updatedAt = Date()
             lastUsed = Date()
@@ -417,7 +419,7 @@ final class AppModel: ObservableObject {
         let previous = chats[chatIndex].turns.dropLast().suffix(6)
         var out: [[String: Any]] = []
         for t in previous where !t.answer.isEmpty {
-            out.append(["role": "user", "content": t.ask])
+            out.append(["role": "user", "content": t.contextNote.map { "\(t.ask)\n\n(\($0))" } ?? t.ask])
             out.append(["role": "assistant", "content": t.rememberedAnswer])
         }
         return out
@@ -619,13 +621,14 @@ final class AppModel: ObservableObject {
         if voice { flushTTS() }
     }
 
-    /// Computer use stops when the user takes the mouse: a real click, or 40 pt of real movement
-    /// (summed deltas, so trackpad jitter and our own synthetic moves don't count).
+    /// Computer use stops when the user takes the mouse back: a real click, or 80 pt of real movement
+    /// (summed deltas, so jitter and our own synthetic moves don't count). Only once the agent has started
+    /// acting: while it's still thinking, a hand resting on the trackpad after pressing ↵ isn't a stop.
     private func userMouse(dx: Double, dy: Double, clicked: Bool) {
-        guard let cua else { return }
+        guard let cua, cua.hasActed else { return }
         if clicked { cua.stop("you clicked"); return }
         cuaUserTravel += hypot(dx, dy)
-        if cuaUserTravel > 40 { cua.stop("you moved the mouse") }
+        if cuaUserTravel > 80 { cua.stop("you moved the mouse") }
     }
 
     // MARK: - Voice out (Bulbul)

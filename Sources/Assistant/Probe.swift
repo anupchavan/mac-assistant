@@ -107,6 +107,34 @@ enum Probe {
             let t0 = Date()
             let (heard, lang) = await stt.finish()
             print(String(format: "final after %.0f ms: \"%@\" (%@)", Date().timeIntervalSince(t0) * 1000, heard, lang ?? "?"))
+        case "media-test":
+            // Two synthetic 4 s clips → keep 0–2.5 of the first + all of the second → expect 6.5 s.
+            let dir = URL(fileURLWithPath: rest.first ?? NSTemporaryDirectory())
+            let a = dir.appendingPathComponent("clip-a.mov"), b = dir.appendingPathComponent("clip-b.mov")
+            try await MediaTestClips.write(a, seconds: 4, gray: 0.2); try await MediaTestClips.write(b, seconds: 4, gray: 0.8)
+            let r = try await Media.trimAndMerge([Media.Clip(url: a, start: nil, end: Media.seconds("0:02.5") ?? 2.5),
+                                                  Media.Clip(url: b, start: nil, end: nil)], output: dir.appendingPathComponent("merged.mov"))
+            let d = try await AVURLAsset(url: r.url).load(.duration).seconds
+            print(String(format: "merged %@: composed %.2f s, file %.2f s", r.url.lastPathComponent, r.seconds, d))
+        case "agent-fixture":
+            // The user's real ask against a fixed Finder context, to see which tool the model picks (never run).
+            let ask = rest.first ?? "from the one which was recorded earlier, keep like 09:35 and from the second, complete keep, and merge both videos into one (one after other)"
+            let block = """
+            APP: Finder (com.apple.finder)
+            WINDOW: Downloads
+            FINDER_SELECTION: /Users/me/Downloads/Screen Recording 2026-10-16 at 10.17.16 PM.mov
+            /Users/me/Downloads/Screen Recording 2026-10-16 at 10.30.28 PM.mov
+            OUTPUT_MODE: typed
+            """
+            for (model, version) in [(Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b"), SarvamChat.Version.v1)] {
+                var name = "", args = ""
+                for try await e in SarvamChat.stream(model: model, version: version, messages: [["role": "system", "content": Prompts.system], ["role": "user", "content": block + "\n\nASK: \(ask)"]],
+                                                     tools: Tools.declarations, reasoning: nil, maxTokens: 600) {
+                    if case let .toolCallDelta(_, _, n, a) = e { name += n ?? ""; args += a ?? "" }
+                    if case let .text(t) = e { print(t, terminator: "") }
+                }
+                print("\n\(model): \(name.isEmpty ? "no tool" : name) \(args)")
+            }
         case "cua-plan":
             // The first real computer-use step for a task on the front window, never executed. Screenshot
             // requests are answered (harmless) until the model plans something else; that is printed with
@@ -353,5 +381,31 @@ enum RenderProbe {
         let url = dir.appendingPathComponent("\(name).png")
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
         print(String(format: "%@  %.0f×%.0f pt", url.lastPathComponent, width, h))
+    }
+}
+
+import AVFoundation
+import CoreVideo
+
+/// Solid-grey test clips for `--probe media-test`.
+enum MediaTestClips {
+    static func write(_ url: URL, seconds: Int, gray: CGFloat) async throws {
+        try? FileManager.default.removeItem(at: url)
+        let w = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: 320, AVVideoHeightKey: 180])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA, kCVPixelBufferWidthKey as String: 320, kCVPixelBufferHeightKey as String: 180])
+        w.add(input); w.startWriting(); w.startSession(atSourceTime: .zero)
+        for f in 0..<(seconds * 10) {
+            while !input.isReadyForMoreMediaData { try await Task.sleep(nanoseconds: 2_000_000) }
+            var pb: CVPixelBuffer?
+            CVPixelBufferPoolCreatePixelBuffer(nil, adaptor.pixelBufferPool!, &pb)
+            guard let pb else { continue }
+            CVPixelBufferLockBaseAddress(pb, [])
+            memset(CVPixelBufferGetBaseAddress(pb), Int32(gray * 255), CVPixelBufferGetDataSize(pb))
+            CVPixelBufferUnlockBaseAddress(pb, [])
+            adaptor.append(pb, withPresentationTime: CMTime(value: CMTimeValue(f), timescale: 10))
+        }
+        input.markAsFinished()
+        await w.finishWriting()
     }
 }

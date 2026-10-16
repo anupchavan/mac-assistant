@@ -4,11 +4,14 @@ enum Route: String, Codable { case fast, deep, agent, computer }
 
 /// Pure-code rule pass (prompts.md §3 and §11.1). Runs in well under a millisecond.
 enum Router {
-    static let computerVerbs = #"(?i)\b(block|unblock|mute|unmute|unfollow|follow|report|unsubscribe|archive|like|retweet|repost|star|pin|turn (on|off)|enable|disable|click|toggle|go to settings)\b"#
+    /// Only unambiguous on-screen actions go straight to computer use. Words like "like", "follow", "pin",
+    /// "click" also appear in ordinary asks ("keep like 9:35"), so those go to the agent, which can still
+    /// choose use_computer.
+    static let computerVerbs = #"(?i)\b(block|unblock|unfollow|report (this|him|her|them|the)|unsubscribe|retweet|repost)\b"#
     static let computerHi = #"(?i)((block|mute|unfollow|unsubscribe) kar(o|do)|chalu kar(o|do))"#
     static let agentVerbs = #"(?i)\b(open|launch|send|email|reply to|schedule|add (this|it)? ?to (my )?(calendar|reminders?)|remind me|create|make a (note|reminder|event)|move|rename|copy (these|this) to|copy|insert|type (this|it)|paste|save|search for|google|play|set (a )?timer|run)\b"#
     /// Things a shortcut or a click does in the front app (press_shortcut / use_computer).
-    static let actionVerbs = #"(?i)\b(close|quit|exit|minimi[sz]e|hide|maximi[sz]e|full ?screen|reload|refresh|go (back|forward)|new (tab|window)|reopen|scroll|zoom( in| out)?|pause|resume|bookmark|find|select all|undo|redo|switch to|go to)\b"#
+    static let actionVerbs = #"(?i)\b(merge|trim|cut|combine|join|convert|compress|mute|unmute|like|follow|pin|star|archive|click|toggle|enable|disable|turn (on|off)|close|quit|exit|minimi[sz]e|hide|maximi[sz]e|full ?screen|reload|refresh|go (back|forward)|new (tab|window)|reopen|scroll|zoom( in| out)?|pause|resume|bookmark|find|select all|undo|redo|switch to|go to)\b"#
     static let agentHi = #"(?i)(kholo|khol do|bhejo|bana do|add karo|yaad dila|move karo|save karo|chalao|copy karo|likh do|band? ?kar(o|do| do)|bandh? kar|peeche jao|piche jao|wapas jao|aage jao|refresh karo|reload karo|scroll karo|zoom karo|chhota karo|bada karo|pause karo|play karo|undo karo|hata do|naya tab)"#
     /// "can you …", "please …": an ask to do something, so give it tools.
     static let request = #"(?i)^\s*(hey\s+)?((can|could|will|would) you|please|pls|kya tum|kya aap)\b"#
