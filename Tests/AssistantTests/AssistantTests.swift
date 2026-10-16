@@ -1,0 +1,131 @@
+import XCTest
+@testable import Assistant
+
+final class FnGestureTests: XCTestCase {
+    func decisions(_ timeline: [GestureEvent], keepPreroll: Bool = false) -> [FnGesture.Output] {
+        var m = FnGesture()
+        var out: [FnGesture.Output] = []
+        for ev in timeline {
+            switch ev {
+            case let .down(t): out += m.tick(t) + m.fnDown(t)
+            case let .shiftDown(t): out += m.tick(t) + m.fnDown(t, shift: true)
+            case let .shift(t): out += m.tick(t) + m.shiftDown(t)
+            case let .up(t): out += m.tick(t) + m.fnUp(t)
+            case let .key(c, t): out += m.tick(t) + m.otherKeyDown(c, t)
+            case let .wait(t): out += m.tick(t)
+            }
+        }
+        return keepPreroll ? out : out.filter { $0 != .preroll }
+    }
+
+    func testHold() { XCTAssertEqual(decisions([.down(0), .wait(200), .up(600)]), [.holdBegan, .holdEnded(heldMs: 600)]) }
+    func testDoubleTap() { XCTAssertEqual(decisions([.down(0), .up(120), .down(270), .up(390)]), [.handsFree]) }
+    func testStrayTap() { XCTAssertEqual(decisions([.down(0), .up(100), .wait(600)]), [.tap]) }
+    func testFnArrowNeverFires() { XCTAssertEqual(decisions([.down(0), .key(124, 80), .up(150), .wait(800)]), [.discard]) }
+    /// Shift held at fn-down: typed, and never a preroll (the mic must not start).
+    func testShiftFn() { XCTAssertEqual(decisions([.shiftDown(0), .up(150), .wait(800)], keepPreroll: true), [.typed]) }
+    /// Shift pressed during the hold window: typed (the preroll gets torn down), and no hold follows.
+    func testFnThenShift() { XCTAssertEqual(decisions([.down(0), .shift(80), .up(600), .wait(1200)], keepPreroll: true), [.preroll, .typed]) }
+    func testFnSpace() { XCTAssertEqual(decisions([.down(0), .key(49, 90), .up(200), .wait(800)]), [.typed]) }
+    func testTripleTap() { XCTAssertEqual(decisions([.down(0), .up(80), .down(160), .up(240), .down(320), .up(400)]), [.handsFree, .cancel]) }
+    func testShortPressThenNothing() { XCTAssertEqual(decisions([.down(0), .up(150), .wait(700)]), [.tap]) }
+    func testDoubleTapSecondHeld() { XCTAssertEqual(decisions([.down(0), .up(100), .down(250), .wait(900), .up(1000)]), [.handsFree]) }
+    func testHandsFreeStop() {
+        XCTAssertEqual(decisions([.down(0), .up(100), .down(250), .up(330), .down(3000), .up(3080)]), [.handsFree, .handsFreeStop])
+    }
+}
+
+final class PanelPlacerTests: XCTestCase {
+    let screen = CGRect(x: 0, y: 0, width: 1512, height: 944)
+    let size = CGSize(width: 560, height: 300)
+
+    /// Bar top 18 under the pointer, panel 12 to its right, growing up from the bar; the cap is what fits above.
+    func testCentreGrowsUpFromBar() {
+        let p = PanelPlacer.place(pointer: CGPoint(x: 700, y: 500), size: size, visible: screen)
+        XCTAssertEqual(p.origin.x, 712)
+        XCTAssertEqual(p.origin.y, 500 - 18 - Grid.inputHeight)     // bottom edge anchored under the bar
+        XCTAssertTrue(p.growsUp)
+        XCTAssertEqual(p.cap, 920 - p.origin.y)                      // room above, under the 560 cap
+    }
+    func testTopEdgeHangsDown() {
+        let p = PanelPlacer.place(pointer: CGPoint(x: 700, y: 900), size: size, visible: screen)
+        XCTAssertFalse(p.growsUp)
+        XCTAssertEqual(p.origin.y + size.height, 882)               // top edge at the bar's top
+        XCTAssertTrue(screen.insetBy(dx: 23, dy: 23).contains(CGRect(origin: p.origin, size: size)))
+    }
+    func testRightEdgeFlipsLeft() {
+        let p = PanelPlacer.place(pointer: CGPoint(x: 1400, y: 500), size: size, visible: screen)
+        XCTAssertLessThanOrEqual(p.origin.x + size.width, screen.maxX - 24)
+    }
+    func testBottomEdgeGrowsUp() {
+        let p = PanelPlacer.place(pointer: CGPoint(x: 700, y: 40), size: size, visible: screen)
+        XCTAssertTrue(p.growsUp)
+        XCTAssertEqual(p.origin.y, 24)                               // bar clamped 24 above the Dock edge
+        XCTAssertEqual(p.cap, 560)
+    }
+    func testBottomRightCorner() {
+        let p = PanelPlacer.place(pointer: CGPoint(x: 1500, y: 10), size: size, visible: screen)
+        XCTAssertTrue(screen.insetBy(dx: 23, dy: 23).contains(CGRect(origin: p.origin, size: size)))
+    }
+    func testSecondaryDisplayNegativeOrigin() {
+        let s2 = CGRect(x: -1920, y: 0, width: 1920, height: 1080)
+        let p = PanelPlacer.place(pointer: CGPoint(x: -100, y: 540), size: size, visible: s2)
+        XCTAssertTrue(s2.insetBy(dx: 23, dy: 23).contains(CGRect(origin: p.origin, size: size)))
+    }
+    func testCap() { XCTAssertEqual(PanelPlacer.cap(for: screen), 560); XCTAssertEqual(PanelPlacer.cap(for: CGRect(x: 0, y: 0, width: 1000, height: 700)), 420) }
+}
+
+final class RouterTests: XCTestCase {
+    func testRoutes() {
+        XCTAssertEqual(Router.route("block this user", app: "Google Chrome", computerUseAvailable: true), .computer)
+        XCTAssertEqual(Router.route("block this user", app: "Google Chrome", computerUseAvailable: false), .fast)
+        XCTAssertEqual(Router.route("add this to my calendar", app: "Mail", computerUseAvailable: true), .agent)
+        XCTAssertEqual(Router.route("what does this mean", app: "Safari", computerUseAvailable: true), .fast)
+        XCTAssertEqual(Router.route("why does this crash", app: "Xcode", computerUseAvailable: true), .deep)
+        XCTAssertEqual(Router.route("isko block karo", app: "Arc", computerUseAvailable: true), .computer)
+        XCTAssertEqual(Router.route("Can you close this tab?", app: "Safari", computerUseAvailable: true), .agent)
+        XCTAssertEqual(Router.route("isko band karo", app: "Safari", computerUseAvailable: true), .agent)
+        XCTAssertEqual(Router.route("go back", app: "Safari", computerUseAvailable: true), .agent)
+        XCTAssertNotEqual(Router.route("Click.", app: "Safari", computerUseAvailable: true), .computer)
+    }
+    func testSpeechCleaning() {
+        XCTAssertEqual(AppModel.cleanForSpeech("**Bold** see https://x.com/a now"), "Bold see the link now")
+    }
+}
+
+final class SpeechGateTests: XCTestCase {
+    func testKeyClickAndRoomNoiseAreNotSpeech() {
+        var g = SpeechGate()
+        g.feed(0.2)                                   // fn click in the first chunk
+        for _ in 0..<20 { g.feed(0.006) }             // quiet room
+        g.feed(0.03); g.feed(0.004)                   // one bump
+        XCTAssertFalse(g.heardSpeech)
+    }
+    func testSpeechAfterNoise() {
+        var g = SpeechGate()
+        for _ in 0..<5 { g.feed(0.01) }
+        for _ in 0..<4 { g.feed(0.08) }
+        XCTAssertTrue(g.heardSpeech)
+        for _ in 0..<8 { g.feed(0.01) }
+        XCTAssertEqual(g.silenceMs, 800)
+    }
+    func testNoiseTranscripts() {
+        XCTAssertTrue(SpeechGate.isNoise(" ... ", voicedMs: 2000))
+        XCTAssertTrue(SpeechGate.isNoise("Thank you.", voicedMs: 400))
+        XCTAssertFalse(SpeechGate.isNoise("Thank you.", voicedMs: 1500))
+        XCTAssertFalse(SpeechGate.isNoise("close this tab", voicedMs: 400))
+    }
+}
+
+final class APIErrorTests: XCTestCase {
+    func testNoKeyFragmentsOrJSON() {
+        let body = #"{"error":{"message":"Incorrect API key provided: sk-proj-AbC1********************xYz9. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error"}}"#
+        let e = APIError(status: 401, body: body, provider: .openAI)
+        XCTAssertEqual(e.errorDescription, "Your OpenAI key was refused. Put a valid one in ~/.zshrc as OPENAI_API_KEY, then choose Reload Keys.")
+        XCTAssertFalse(e.sanitizedMessage.contains("sk-"))
+        XCTAssertFalse(e.sanitizedMessage.contains("***"))
+        XCTAssertLessThanOrEqual(e.sanitizedMessage.count, 80)
+        let bad = APIError(status: 400, body: #"{"error":{"message":"Tool messages found but no tools provided.","code":"invalid_request_error"}}"#)
+        XCTAssertEqual(bad.errorDescription, "Sarvam returned an error (400): Tool messages found but no tools provided.")
+    }
+}

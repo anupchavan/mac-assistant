@@ -1,0 +1,266 @@
+import AppKit
+import EventKit
+
+struct ToolCall: Identifiable {
+    let id: String
+    let name: String
+    let arguments: [String: Any]
+    let rawArguments: String
+
+    func string(_ k: String) -> String { arguments[k] as? String ?? "" }
+
+    /// Needs a confirm card before running (changes or creates data, or a shortcut that can lose work).
+    var needsConfirm: Bool {
+        if name == "press_shortcut" { return Tools.isDestructive(shortcut: string("keys")) }
+        return ["create_event", "create_reminder", "move_files", "run_shortcut", "insert_text"].contains(name)
+    }
+
+    /// Verb + object for the confirm card's ↵ button, never "OK".
+    var confirmVerb: String {
+        switch name {
+        case "create_event": return "Add to Calendar"
+        case "create_reminder": return "Add Reminder"
+        case "move_files": return "Move Files"
+        case "run_shortcut": return "Run Shortcut"
+        case "insert_text": return "Insert"
+        case "press_shortcut": return "Press \(Tools.symbols(string("keys")))"
+        default: return "Run"
+        }
+    }
+
+    var confirmTitle: String {
+        switch name {
+        case "create_event": return "Add “\(string("title"))” to Calendar"
+        case "create_reminder": return "Remind you: “\(string("title"))”"
+        case "move_files":
+            let n = (arguments["paths"] as? [String])?.count ?? 0
+            return "Move \(n) file\(n == 1 ? "" : "s") to \((string("destination") as NSString).lastPathComponent)"
+        case "run_shortcut": return "Run the shortcut “\(string("name"))”"
+        case "insert_text": return "Insert text into \(string("app").isEmpty ? "the focused field" : string("app"))"
+        case "press_shortcut": return "Press \(Tools.symbols(string("keys")))\(string("app").isEmpty ? "" : " in \(string("app"))")"
+        default: return name
+        }
+    }
+
+    var confirmDetail: String {
+        switch name {
+        case "create_event":
+            return [Tools.humanDate(string("start")), string("end").isEmpty ? "" : "until \(Tools.humanDate(string("end")))"]
+                .filter { !$0.isEmpty }.joined(separator: " ")
+        case "create_reminder": return Tools.humanDate(string("due"))
+        case "move_files": return string("destination")
+        case "insert_text": return String(string("text").prefix(160))
+        default: return string("input")
+        }
+    }
+
+    /// Status line while running ("Adding to Calendar").
+    var statusText: String {
+        switch name {
+        case "open_url": return "Opening \(URL(string: string("url"))?.host ?? "the link")"
+        case "open_app": return "Opening \(string("name"))"
+        case "reveal_or_open_file": return "Opening \((string("path") as NSString).lastPathComponent)"
+        case "copy_to_clipboard": return "Copying"
+        case "create_event": return "Adding to Calendar"
+        case "create_reminder": return "Adding the reminder"
+        case "move_files": return "Moving files"
+        case "run_shortcut": return "Running \(string("name"))"
+        case "insert_text": return "Inserting"
+        case "press_shortcut": return "Pressing \(Tools.symbols(string("keys")))"
+        case "use_computer": return "Working out what to click"
+        default: return name
+        }
+    }
+}
+
+enum Tools {
+    static let declarations: [[String: Any]] = {
+        func fn(_ name: String, _ desc: String, _ props: [String: Any], _ req: [String]) -> [String: Any] {
+            ["type": "function", "function": ["name": name, "description": desc,
+                                              "parameters": ["type": "object", "properties": props, "required": req]]]
+        }
+        let s: [String: Any] = ["type": "string"]
+        return [
+            fn("open_url", "Open a URL in the default browser", ["url": s], ["url"]),
+            fn("open_app", "Open or focus a Mac app by name", ["name": s], ["name"]),
+            fn("reveal_or_open_file", "Open a file, or reveal it in Finder", ["path": s, "reveal": ["type": "boolean"]], ["path"]),
+            fn("insert_text", "Insert text into the field the user was focused on", ["text": s], ["text"]),
+            fn("copy_to_clipboard", "Copy text to the clipboard", ["text": s], ["text"]),
+            fn("create_event", "Create a calendar event", ["title": s, "start": ["type": "string", "description": "ISO 8601"],
+                                                           "end": ["type": "string", "description": "ISO 8601"], "notes": s], ["title", "start"]),
+            fn("create_reminder", "Create a reminder", ["title": s, "due": ["type": "string", "description": "ISO 8601"]], ["title"]),
+            fn("move_files", "Move files to a folder, creating it if needed",
+               ["paths": ["type": "array", "items": s], "destination": s], ["paths", "destination"]),
+            fn("run_shortcut", "Run a Shortcuts shortcut by name", ["name": s, "input": s], ["name"]),
+            fn("press_shortcut", "Press a keyboard shortcut in an app (default: the app the user is in). Use it for anything a shortcut does: close this tab cmd+w, new tab cmd+t, reopen closed tab cmd+shift+t, reload cmd+r, go back cmd+[, go forward cmd+], find cmd+f, select all cmd+a, undo cmd+z, redo cmd+shift+z, zoom in cmd+plus, zoom out cmd+minus, full screen ctrl+cmd+f, minimize cmd+m, hide cmd+h, new window cmd+n, close window cmd+shift+w, quit cmd+q, scroll down space or pagedown.",
+               ["keys": ["type": "string", "description": "Keys joined with +, e.g. cmd+w, cmd+shift+t, ctrl+cmd+f"],
+                "app": ["type": "string", "description": "App name; omit for the app the user is in"]], ["keys"]),
+            fn("use_computer", "Do something on screen by clicking and typing (an agent that sees the window) when no other tool or shortcut fits, e.g. block or mute a user, toggle a setting, press a button.",
+               ["task": ["type": "string", "description": "One clear English instruction naming the exact on-screen target"]], ["task"]),
+        ]
+    }()
+
+    static let store = EKEventStore()
+
+    /// Shortcuts that can lose work: quit, delete, force quit, log out.
+    static func isDestructive(shortcut: String) -> Bool {
+        let k = Set(shortcut.lowercased().split(separator: "+").map { $0.trimmingCharacters(in: .whitespaces) })
+        guard k.contains("cmd") || k.contains("command") else { return false }
+        return k.contains("q") || k.contains("delete") || k.contains("backspace") || k.contains("forwarddelete") || k.contains("escape") || k.contains("esc")
+    }
+
+    /// "cmd+shift+t" → "⇧⌘T" for status lines and the confirm card.
+    static func symbols(_ shortcut: String) -> String {
+        let order = ["ctrl": "⌃", "control": "⌃", "alt": "⌥", "option": "⌥", "shift": "⇧", "cmd": "⌘", "command": "⌘"]
+        let parts = shortcut.lowercased().split(separator: "+").map { String($0).trimmingCharacters(in: .whitespaces) }
+        let mods = ["⌃", "⌥", "⇧", "⌘"].filter { m in parts.contains { order[$0] == m } }.joined()
+        let key = parts.last { order[$0] == nil } ?? ""
+        let named = ["[": "[", "]": "]", "plus": "+", "minus": "−", "delete": "⌫", "backspace": "⌫", "space": "Space", "pagedown": "⇟", "esc": "⎋", "escape": "⎋"]
+        return mods + (named[key] ?? key.uppercased())
+    }
+
+    static func parseDate(_ s: String) -> Date? {
+        guard !s.isEmpty else { return nil }
+        let f = ISO8601DateFormatter()
+        for opts: ISO8601DateFormatter.Options in [[.withInternetDateTime], [.withInternetDateTime, .withFractionalSeconds],
+                                                    [.withFullDate, .withTime, .withColonSeparatorInTime, .withDashSeparatorInDate]] {
+            f.formatOptions = opts
+            if let d = f.date(from: s) { return d }
+        }
+        return nil
+    }
+
+    static func humanDate(_ s: String) -> String {
+        guard let d = parseDate(s) else { return s }
+        let f = DateFormatter()
+        f.doesRelativeDateFormatting = true
+        f.dateStyle = .medium; f.timeStyle = .short
+        return f.string(from: d)
+    }
+
+    /// Runs a tool and returns a short result string for the model.
+    static func run(_ call: ToolCall, insertInto pid: pid_t?) async -> String {
+        do {
+            switch call.name {
+            case "open_url":
+                guard let url = URL(string: call.string("url")) else { return "error: bad url" }
+                await MainActor.run { _ = NSWorkspace.shared.open(url) }
+                return "opened"
+            case "open_app":
+                let name = call.string("name")
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                p.arguments = ["-a", name]
+                try p.run(); p.waitUntilExit()
+                return p.terminationStatus == 0 ? "opened \(name)" : "error: no app named \(name)"
+            case "reveal_or_open_file":
+                let url = URL(fileURLWithPath: (call.string("path") as NSString).expandingTildeInPath)
+                await MainActor.run {
+                    if call.arguments["reveal"] as? Bool == true { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+                    else { NSWorkspace.shared.open(url) }
+                }
+                return "done"
+            case "copy_to_clipboard":
+                await MainActor.run {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(call.string("text"), forType: .string)
+                }
+                return "copied"
+            case "insert_text":
+                await Inserter.insert(call.string("text"), into: pid)
+                return "inserted"
+            case "press_shortcut":
+                let keys = call.string("keys").split(separator: "+").map { String($0).trimmingCharacters(in: .whitespaces) }
+                let name = call.string("app")
+                let app = name.isEmpty ? pid.flatMap { NSRunningApplication(processIdentifier: $0) }
+                    : NSWorkspace.shared.runningApplications.first { ($0.localizedName ?? "").caseInsensitiveCompare(name) == .orderedSame }
+                guard let app else { return "error: \(name.isEmpty ? "no app to send it to" : "\(name) isn't running")" }
+                await MainActor.run { FocusMove.begin(); app.activate() }
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                let sent = ComputerUser.pressKeys(keys, src: HotkeyMonitor.syntheticSource(.combinedSessionState), toPid: app.processIdentifier)
+                return sent ? "pressed \(call.string("keys")) in \(app.localizedName ?? "the app")" : "error: unknown key in \(call.string("keys"))"
+            case "create_event":
+                try await requestCalendar()
+                let ev = EKEvent(eventStore: store)
+                ev.title = call.string("title")
+                ev.startDate = parseDate(call.string("start")) ?? Date().addingTimeInterval(3600)
+                ev.endDate = parseDate(call.string("end")) ?? ev.startDate.addingTimeInterval(1800)
+                ev.notes = call.arguments["notes"] as? String
+                ev.calendar = store.defaultCalendarForNewEvents
+                try store.save(ev, span: .thisEvent)
+                return "event created"
+            case "create_reminder":
+                try await requestReminders()
+                let r = EKReminder(eventStore: store)
+                r.title = call.string("title")
+                r.calendar = store.defaultCalendarForNewReminders()
+                if let due = parseDate(call.string("due")) {
+                    r.dueDateComponents = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: due)
+                    r.addAlarm(EKAlarm(absoluteDate: due))
+                }
+                try store.save(r, commit: true)
+                return "reminder created"
+            case "move_files":
+                let dest = URL(fileURLWithPath: (call.string("destination") as NSString).expandingTildeInPath)
+                try FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+                var moved = 0
+                for p in (call.arguments["paths"] as? [String]) ?? [] {
+                    let src = URL(fileURLWithPath: p)
+                    try FileManager.default.moveItem(at: src, to: dest.appendingPathComponent(src.lastPathComponent))
+                    moved += 1
+                }
+                return "moved \(moved) files"
+            case "run_shortcut":
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/bin/shortcuts")
+                p.arguments = ["run", call.string("name")]
+                let input = call.string("input")
+                if !input.isEmpty {
+                    let pipe = Pipe(); p.standardInput = pipe
+                    try p.run()
+                    pipe.fileHandleForWriting.write(input.data(using: .utf8)!)
+                    pipe.fileHandleForWriting.closeFile()
+                } else { try p.run() }
+                p.waitUntilExit()
+                return p.terminationStatus == 0 ? "ran" : "error: shortcut failed"
+            default:
+                return "error: unknown tool"
+            }
+        } catch {
+            return "error: \(error.localizedDescription)"
+        }
+    }
+
+    static func requestCalendar() async throws {
+        if #available(macOS 14.0, *) {
+            guard try await store.requestFullAccessToEvents() else { throw NSError(domain: "calendar", code: 1, userInfo: [NSLocalizedDescriptionKey: "Calendar access was denied"]) }
+        }
+    }
+
+    static func requestReminders() async throws {
+        if #available(macOS 14.0, *) {
+            guard try await store.requestFullAccessToReminders() else { throw NSError(domain: "reminders", code: 1, userInfo: [NSLocalizedDescriptionKey: "Reminders access was denied"]) }
+        }
+    }
+}
+
+/// Puts text into the previously focused field: activate that app, paste, restore the clipboard.
+enum Inserter {
+    @MainActor
+    static func insert(_ text: String, into pid: pid_t?) async {
+        FocusMove.begin()
+        let pb = NSPasteboard.general
+        let saved = pb.string(forType: .string)
+        pb.clearContents()
+        pb.setString(text, forType: .string)
+        if let pid, let app = NSRunningApplication(processIdentifier: pid) { app.activate() }
+        try? await Task.sleep(nanoseconds: 120_000_000)
+        let src = HotkeyMonitor.syntheticSource(.combinedSessionState)
+        let down = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: true)   // V
+        let up = CGEvent(keyboardEventSource: src, virtualKey: 9, keyDown: false)
+        down?.flags = .maskCommand; up?.flags = .maskCommand
+        down?.post(tap: .cghidEventTap); up?.post(tap: .cghidEventTap)
+        try? await Task.sleep(nanoseconds: 400_000_000)
+        if let saved { pb.clearContents(); pb.setString(saved, forType: .string) }
+    }
+}

@@ -1,0 +1,86 @@
+# Assistant (unnamed Mac app)
+
+A menu-bar app that sees the window you're in and answers by voice or text. Hold **fn**, ask, let go.
+Sarvam is the ears, brain and voice (Saaras STT, sarvam-105b / gemma4, Bulbul TTS); OpenAI computer use
+is the hands when an ask needs clicking. Specs are in `docs/` (ui-spec v4 is the visual source of truth).
+
+## Build and run
+
+```bash
+./make-app.sh run        # swift build -c release → build/Assistant.app, signed, launched
+tail -f build/assistant.log
+swift test               # fn gesture machine, placement, router
+```
+
+Requires macOS 14+ and Xcode 16+ (Xcode 26 gets the real Liquid Glass `NSGlassEffectView`; older SDKs use
+`NSVisualEffectView`).
+
+## Keys
+
+Read from the environment, else from `export NAME=...` lines in `~/.zshrc` (an app opened from Finder
+doesn't inherit your shell). Never logged.
+
+| Variable | Used for |
+|---|---|
+| `SARVAM_API_KEY` | STT, chat, TTS (required) |
+| `OPENAI_API_KEY` | computer use (optional; without it those asks get a normal answer) |
+
+Optional overrides (same lookup): `ASSISTANT_STT_MODEL` (saaras:v4), `ASSISTANT_VISION_MODEL` (gemma4),
+`ASSISTANT_DEEP_MODEL` (sarvam-105b), `ASSISTANT_TTS_MODEL` (bulbul:v3), `ASSISTANT_TTS_SPEAKER` (shubh),
+`ASSISTANT_TTS_PACE` (1.1), `ASSISTANT_CUA_MODEL` (gpt-6-astra), `ASSISTANT_CUA_FALLBACK_MODEL` (gpt-6.1-sol),
+`ASSISTANT_SIGN_IDENTITY` (codesign identity for make-app.sh).
+
+## First run: permissions
+
+The menu-bar "?" menu shows ✓/✗ for each; click a ✗ to open its Settings pane.
+Accessibility (read the screen, post clicks), Input Monitoring (fn), Screen Recording (window screenshot),
+Microphone. macOS ties these grants to the code signature, so sign with a stable identity
+(an "Apple Development" certificate is picked up automatically) or you'll re-grant after every build.
+
+Demo Mac setup: System Settings → Keyboard → "Press 🌐 key to" = Do Nothing; move the Dictation shortcut
+off the globe key; quit Kivi and Wispr Flow (they also listen to fn).
+
+## Gestures
+
+| Gesture | Does |
+|---|---|
+| Hold fn | push-to-talk; release sends |
+| Double-tap fn | hands-free; tap fn (or pause) to send |
+| fn + Space, or shift + fn | type instead (shift + fn never turns the mic on) |
+| fn while it's speaking | stops speech (hold to ask a follow-up) |
+| Esc | close (stops speech, listening and the answer); on the confirm card it cancels, in a popover it closes the popover, during computer use it stops it |
+| ⌘[ / ⌘] / ⌘N | previous / next / new chat |
+| ⌘K | actions (copy, insert, read again, think harder, chats, look at another app) |
+| ↵ on a typed answer | insert it into the field you were in |
+
+Each summon continues the current chat if you used it in the last 2 minutes; after that it opens a new one (⌘[ goes back). Chats are saved to
+`~/Library/Application Support/dev.anup.assistant/chats.json` (no screenshots).
+
+## How a turn flows
+
+fn down → mic + STT socket open and the front window is captured (AX + ScreenCaptureKit) before the
+panel appears → release → `speech_end` → final transcript → rule-pass router →
+- **fast**: gemma4 on `/v2` with the screenshot (falls back to on-device Vision OCR + sarvam-105b if the
+  key isn't whitelisted for V2; the menu toggle "Use screenshots with gemma4" shows the state)
+- **deep**: sarvam-105b, reasoning high
+- **agent**: same plus tools (calendar, reminders, open, insert, move files, shortcuts); data-changing
+  tools show a confirm card first
+- **computer**: sarvam-105b writes one instruction → confirm → OpenAI Responses `computer` loop with a
+  CGEvent executor; a pill shows each step; Esc or moving the mouse stops it
+
+Voice answers stream sentence by sentence into Bulbul over a WebSocket; stopping closes the socket
+(there's no cancel message) and the chat remembers only what was heard.
+
+## Probes (real APIs, from the terminal)
+
+```bash
+B=build/Assistant.app/Contents/MacOS/Assistant
+$B --probe keys            # which keys were found (never prints them)
+$B --probe chat "hi"       # sarvam-105b TTFT
+$B --probe vision          # is gemma4 / V2 enabled for this key?
+$B --probe tts "namaste" hi-IN
+$B --probe stt 4           # speak for 4 s
+$B --probe context         # what the model would see from the front app
+$B --probe handoff "block this user"   # computer-use instruction only, never clicks
+$B --probe gesture         # fn timelines through the state machine
+```
