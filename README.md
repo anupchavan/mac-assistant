@@ -78,7 +78,9 @@ panel appears → release → `speech_end` → final transcript → rule-pass ro
 - **agent**: same plus tools (calendar, reminders, open, insert, move files, shortcuts, keyboard shortcuts, trim and join videos); data-changing
   tools show a confirm card first
 - **computer**: sarvam-105b writes one instruction → confirm → OpenAI Responses `computer` loop with a
-  CGEvent executor; a pill shows each step; Esc or moving the mouse stops it
+  executor with its own cursor (like Codex): it glides to each target and presses elements through
+  accessibility, so your real cursor never moves and you can keep working; when a real click is needed it
+  clicks and puts your cursor straight back. A pill shows each step; Esc or the pill's Stop ends it
 
 Voice answers stream sentence by sentence into Bulbul over a WebSocket; stopping closes the socket
 (there's no cancel message) and the chat remembers only what was heard.

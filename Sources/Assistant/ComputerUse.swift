@@ -62,7 +62,11 @@ final class ComputerUser {
 
     // MARK: The loop
 
+    private var targetPid: pid_t = 0
+
     func run(task: String, pid: pid_t) async -> Outcome {
+        targetPid = pid
+        defer { Task { @MainActor in AgentCursor.shared.hide() } }
         guard let key = Keys.openAI else { return .failed(MissingKey.openAI.localizedDescription) }
         let started = Date()
         var model = Keys.setting("ASSISTANT_CUA_MODEL", default: "gpt-6-astra")
@@ -207,43 +211,44 @@ final class ComputerUser {
         monitor?.syntheticDepth += 1
         defer { monitor?.syntheticDepth -= 1 }
         let src = HotkeyMonitor.syntheticSource(.hidSystemState)
+        // Keys go straight to the target app if you've moved on to another one; otherwise the normal way.
+        let keyTarget: pid_t? = NSWorkspace.shared.frontmostApplication?.processIdentifier == targetPid ? nil : targetPid
         switch type {
         case "click", "double_click":
             guard let p = point() else { return (false, "a click outside the window") }
             let label = Self.label(at: p)
             onStatus?("Clicking \(label ?? "")".trimmingCharacters(in: .whitespaces))
-            Log.info(String(format: "cua click image (%.0f, %.0f) → screen (%.0f, %.0f) on \"%@\"", num("x"), num("y"), p.x, p.y, label ?? "?"))
+            await AgentCursor.shared.move(to: p, label: label.map { "Clicking \($0)" } ?? "Clicking")
+            await MainActor.run { AgentCursor.shared.click() }
             let button = (act["button"] as? String) ?? "left"
-            let (downT, upT, btn): (CGEventType, CGEventType, CGMouseButton) = button == "right"
-                ? (.rightMouseDown, .rightMouseUp, .right) : (.leftMouseDown, .leftMouseUp, .left)
-            // Web apps ignore zero-duration clicks: hover first, then press and release like a hand would.
-            CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
-            try? await Task.sleep(nanoseconds: 80_000_000)
-            let clicks = type == "double_click" ? 2 : 1
-            for i in 1...clicks {
-                let d = CGEvent(mouseEventSource: src, mouseType: downT, mouseCursorPosition: p, mouseButton: btn)
-                let u = CGEvent(mouseEventSource: src, mouseType: upT, mouseCursorPosition: p, mouseButton: btn)
-                d?.setIntegerValueField(.mouseEventClickState, value: Int64(i))
-                u?.setIntegerValueField(.mouseEventClickState, value: Int64(i))
-                d?.post(tap: .cghidEventTap)
-                try? await Task.sleep(nanoseconds: 50_000_000)
-                u?.post(tap: .cghidEventTap)
-                if i < clicks { try? await Task.sleep(nanoseconds: 60_000_000) }
+            // Background first: press the element through accessibility, the real cursor never moves.
+            if type == "click", button == "left", let how = Self.axPress(at: p, pid: targetPid) {
+                Log.info(String(format: "cua click (%.0f, %.0f) on \"%@\" via accessibility (%@)", p.x, p.y, label ?? "?", how))
+            } else {
+                Log.info(String(format: "cua click (%.0f, %.0f) on \"%@\" via mouse events", p.x, p.y, label ?? "?"))
+                await Self.hidClick(at: p, count: type == "double_click" ? 2 : 1, right: button == "right", src: src)
             }
         case "move":
             guard let p = point() else { return (false, "a move outside the window") }
-            CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+            await AgentCursor.shared.move(to: p, label: "")
         case "scroll":
             guard let p = point() else { return (false, "a scroll outside the window") }
             onStatus?("Scrolling")
+            await AgentCursor.shared.move(to: p, label: "Scrolling")
+            let saved = CGEvent(source: nil)?.location
             CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
             let dy = Int32(-num("scroll_y") / 10), dx = Int32(-num("scroll_x") / 10)
             CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2, wheel1: dy * 10, wheel2: dx * 10, wheel3: 0)?.post(tap: .cghidEventTap)
+            try? await Task.sleep(nanoseconds: 40_000_000)
+            Self.restoreCursor(saved)
         case "drag":
             let path = (act["path"] as? [[String: Any]]) ?? []
             let pts = path.compactMap { Self.map(($0["x"] as? NSNumber)?.doubleValue ?? 0, ($0["y"] as? NSNumber)?.doubleValue ?? 0, windowFrame: windowFrame, imageSize: imageSize) }
             guard pts.count >= 2, pts.count == path.count else { return (false, "a drag outside the window") }
             onStatus?("Dragging")
+            await AgentCursor.shared.move(to: pts[0], label: "Dragging")
+            let savedDrag = CGEvent(source: nil)?.location
+            defer { Self.restoreCursor(savedDrag) }
             CGEvent(mouseEventSource: src, mouseType: .leftMouseDown, mouseCursorPosition: pts[0], mouseButton: .left)?.post(tap: .cghidEventTap)
             for p in pts.dropFirst() {
                 CGEvent(mouseEventSource: src, mouseType: .leftMouseDragged, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
@@ -262,13 +267,13 @@ final class ComputerUser {
                 let u = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: false)
                 d?.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
                 u?.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
-                d?.post(tap: .cghidEventTap); u?.post(tap: .cghidEventTap)
+                if let pid = keyTarget { d?.postToPid(pid); u?.postToPid(pid) } else { d?.post(tap: .cghidEventTap); u?.post(tap: .cghidEventTap) }
                 try? await Task.sleep(nanoseconds: 30_000_000)
             }
         case "keypress":
             let keys = (act["keys"] as? [String]) ?? []
             onStatus?("Pressing \(keys.joined(separator: " "))")
-            pressKeys(keys, src: src)
+            Self.pressKeys(keys, src: src, toPid: keyTarget)
         case "wait":
             try? await Task.sleep(nanoseconds: 1_500_000_000)
         case "screenshot":
@@ -317,6 +322,63 @@ final class ComputerUser {
                                                "i": 34, "p": 35, "l": 37, "j": 38, "k": 40, "n": 45, "m": 46, "/": 44, ".": 47, ",": 43]
         if k.count == 1, let c = letters[Character(k.lowercased())] { return c }
         return nil
+    }
+
+    /// Press the element at `p` through accessibility, so the real cursor never moves. Walks up from the
+    /// hit element (text inside a link, an icon inside a button) to something pressable; text fields get
+    /// focus instead. Returns how it acted, or nil when this element needs a real click.
+    static func axPress(at p: CGPoint, pid: pid_t) -> String? {
+        guard AXIsProcessTrusted() else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.5)
+        var hit: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(app, Float(p.x), Float(p.y), &hit) == .success, var el = hit else { return nil }
+        let pressable: Set<String> = ["AXButton", "AXLink", "AXMenuItem", "AXMenuButton", "AXCheckBox", "AXRadioButton",
+                                      "AXPopUpButton", "AXDisclosureTriangle", "AXMenuBarItem"]
+        let editable: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox", "AXSearchField"]
+        for _ in 0..<6 {
+            let role: String = ContextCapture.attr(el, kAXRoleAttribute) ?? ""
+            if editable.contains(role) {
+                return AXUIElementSetAttributeValue(el, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success ? "focus \(role)" : nil
+            }
+            if pressable.contains(role) {
+                var names: CFArray?
+                guard AXUIElementCopyActionNames(el, &names) == .success, ((names as? [String]) ?? []).contains(kAXPressAction),
+                      AXUIElementPerformAction(el, kAXPressAction as CFString) == .success else { return nil }
+                return "press \(role)"
+            }
+            guard let parent: AXUIElement = ContextCapture.attr(el, kAXParentAttribute) else { return nil }
+            el = parent
+        }
+        return nil
+    }
+
+    /// A real click (hover, press, release like a hand; web apps ignore instant clicks), then the user's
+    /// cursor goes straight back to where it was.
+    static func hidClick(at p: CGPoint, count: Int, right: Bool, src: CGEventSource?) async {
+        let saved = CGEvent(source: nil)?.location
+        let (downT, upT, btn): (CGEventType, CGEventType, CGMouseButton) = right
+            ? (.rightMouseDown, .rightMouseUp, .right) : (.leftMouseDown, .leftMouseUp, .left)
+        CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        for i in 1...count {
+            let d = CGEvent(mouseEventSource: src, mouseType: downT, mouseCursorPosition: p, mouseButton: btn)
+            let u = CGEvent(mouseEventSource: src, mouseType: upT, mouseCursorPosition: p, mouseButton: btn)
+            d?.setIntegerValueField(.mouseEventClickState, value: Int64(i))
+            u?.setIntegerValueField(.mouseEventClickState, value: Int64(i))
+            d?.post(tap: .cghidEventTap)
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            u?.post(tap: .cghidEventTap)
+            if i < count { try? await Task.sleep(nanoseconds: 60_000_000) }
+        }
+        try? await Task.sleep(nanoseconds: 40_000_000)
+        restoreCursor(saved)
+    }
+
+    static func restoreCursor(_ p: CGPoint?) {
+        guard let p else { return }
+        CGWarpMouseCursorPosition(p)
+        CGAssociateMouseAndMouseCursorPosition(1)
     }
 
     /// AX label of the element at a point, so the pill says "Clicking Block" instead of coordinates.

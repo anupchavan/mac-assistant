@@ -379,6 +379,7 @@ enum RenderProbe {
         m.filter = "chat"
         save(ActionsPopover(onHeight: { ph = $0 }).environmentObject(m), width: Grid.popoverWidth, name: "8-popover-search", dir: dir, height: { ph })
         save(SettingsView {}, width: 440, name: "9-settings", dir: dir, height: { 0 })
+        save(AgentCursor.preview(label: "Clicking Block @elonmusk"), width: 220, name: "10-agent-cursor", dir: dir, height: { 44 })
 
         // Height must follow content both ways: long thread → new empty chat → back (⌘[).
         m.overlay = .none; m.filter = ""
