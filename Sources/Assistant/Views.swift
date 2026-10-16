@@ -182,8 +182,17 @@ struct BottomBar: View {
         }
         .padding(.horizontal, Grid.inset)
         .frame(minHeight: Grid.inputHeight)
-        .onChange(of: m.focusField) { _, want in if want { focused = true; m.focusField = false } }
+        .onChange(of: m.focusField) { _, want in if want { focused = true; m.focusField = false; caretToEnd() } }
         .onAppear { if m.input == .typed { focused = true } }
+    }
+
+    /// Focusing a field selects all of its text; with words carried over from voice, the next key would
+    /// replace them. Put the caret at the end instead.
+    private func caretToEnd() {
+        DispatchQueue.main.async {
+            guard let editor = NSApp.windows.first(where: { $0.isKeyWindow })?.firstResponder as? NSTextView else { return }
+            editor.setSelectedRange(NSRange(location: (editor.string as NSString).length, length: 0))
+        }
     }
 
     /// Text lines are 24 tall (16/24 type), so 16 above and below centres them on the lead glyph.
@@ -404,31 +413,35 @@ struct TurnView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let divider = turn.divider {
-                LineRow { Icon(name: "globe", size: 16, color: Theme.textQuaternary) } content: {
-                    Text(divider).font(Fonts.body).foregroundStyle(Theme.textTertiary).lineLimit(1)
-                }
-                .frame(height: 32)
+                Text(divider).font(Fonts.body).tracked(13).foregroundStyle(Theme.textTertiary).lineLimit(1)
+                    .frame(maxWidth: .infinity).frame(height: 28)
+                    .padding(.bottom, 4)
             }
-            // Your turn
-            LineRow { EmptyView() } content: {
-                Text(turn.ask).font(Fonts.body).tracked(13).foregroundStyle(Theme.textSecondary)
+            // Your message: a compact bubble on the right, at most ~75% of the panel.
+            HStack(spacing: 0) {
+                Spacer(minLength: Grid.panelWidth * 0.25)
+                Text(turn.ask).font(Fonts.body).tracked(13).lineSpacing(4)
+                    .foregroundStyle(Theme.textPrimary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.vertical, 8).padding(.horizontal, 12)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Theme.chipFill))
             }
-            .padding(.vertical, 6)
+            .padding(.horizontal, Grid.inset)
 
-            // Status: live rows while working, then one collapsed line.
+            // Status: live rows while working, then one collapsed line above the answer.
             if live && !m.answerStarted {
-                ForEach(m.steps.suffix(4)) { StatusRow(step: $0) }
+                VStack(alignment: .leading, spacing: 0) { ForEach(m.steps.suffix(4)) { StatusRow(step: $0) } }
+                    .padding(.top, 8)
             } else if live || turn.workedFor != nil {
                 Button(action: toggle) {
-                    LineRow { EmptyView() } content: {
-                        Text(summary).font(Fonts.body).foregroundStyle(Theme.textTertiary)
-                    }
-                    .frame(height: 24)
-                    .contentShape(Rectangle())
+                    Text(summary).font(Fonts.body).tracked(13).foregroundStyle(Theme.textTertiary)
+                        .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+                        .padding(.horizontal, Grid.inset)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .padding(.top, 8)
                 if expanded {
                     ForEach(live ? m.steps.map(\.title) : turn.steps, id: \.self) { t in
                         StatusRow(step: StatusStep(title: t, state: .done))
@@ -436,22 +449,24 @@ struct TurnView: View {
                 }
             }
 
-            // Its turn
+            // The answer: plain text from x 16, no bubble.
             if !turn.answer.isEmpty {
-                LineRow { EmptyView() } content: { answerText }
-                    .padding(.top, 4).padding(.bottom, 8)
+                answerText
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Grid.inset)
+                    .padding(.top, 4)
             }
             if let error = turn.error {
-                LineRow(alignment: .firstTextBaseline) {
-                    Icon(name: "alert", size: 16, color: Theme.error)
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Icon(name: "alert", size: 14, color: Theme.error)
                         .alignmentGuide(.firstTextBaseline) { d in d[VerticalAlignment.center] + 4 }
-                } content: {
-                    Text(error).font(Fonts.body).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    Text(error).font(Fonts.body).tracked(13).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(.vertical, 6)
+                .padding(.horizontal, Grid.inset)
+                .padding(.top, 8)
             }
         }
-        .padding(.bottom, 4)
+        .padding(.bottom, 12)       // 12 between turns
     }
 
     private var summary: String {

@@ -17,15 +17,18 @@ Requires macOS 14+ and Xcode 16+ (Xcode 26 gets the real Liquid Glass `NSGlassEf
 
 ## Keys
 
-Read from the environment, else from `export NAME=...` lines in `~/.zshrc` (an app opened from Finder
-doesn't inherit your shell). Never logged.
+Open **Settings…** (⌘, from the menu-bar "?") and paste your keys. They're saved in the macOS Keychain
+(service `dev.anup.assistant`) and used immediately; the window opens by itself on first run if no Sarvam
+key is found. Alternatively, `export NAME=...` lines in `~/.zshrc` work too (an app opened from Finder
+doesn't inherit your shell). Lookup order: Keychain → environment → `~/.zshrc` (last export wins).
+Keys are never logged or shown back.
 
 | Variable | Used for |
 |---|---|
 | `SARVAM_API_KEY` | STT, chat, TTS (required) |
 | `OPENAI_API_KEY` | computer use (optional; without it those asks get a normal answer) |
 
-Optional overrides (same lookup): `ASSISTANT_STT_MODEL` (saaras:v4), `ASSISTANT_VISION_MODEL` (gemma4),
+Optional overrides (environment or `~/.zshrc`): `ASSISTANT_STT_MODEL` (saaras:v4), `ASSISTANT_VISION_MODEL` (gemma4),
 `ASSISTANT_DEEP_MODEL` (sarvam-105b), `ASSISTANT_TTS_MODEL` (bulbul:v3), `ASSISTANT_TTS_SPEAKER` (shubh),
 `ASSISTANT_TTS_PACE` (1.1), `ASSISTANT_CUA_MODEL` (gpt-6-astra), `ASSISTANT_CUA_FALLBACK_MODEL` (gpt-6.1-sol),
 `ASSISTANT_SIGN_IDENTITY` (codesign identity for make-app.sh).
@@ -83,4 +86,7 @@ $B --probe stt 4           # speak for 4 s
 $B --probe context         # what the model would see from the front app
 $B --probe handoff "block this user"   # computer-use instruction only, never clicks
 $B --probe gesture         # fn timelines through the state machine
+$B --probe agent "close this tab" [v1]   # which tool the model picks (never runs it)
+$B --probe cua-access     # can this OpenAI key use the computer-use models?
+$B --probe render <dir>   # offscreen PNGs of the panel states (nothing appears on screen)
 ```

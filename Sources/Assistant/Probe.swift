@@ -238,6 +238,24 @@ enum RenderProbe {
         save(ActionsPopover(onHeight: { ph = $0 }).environmentObject(m), width: Grid.popoverWidth, name: "7-popover", dir: dir, height: { ph })
         m.filter = "chat"
         save(ActionsPopover(onHeight: { ph = $0 }).environmentObject(m), width: Grid.popoverWidth, name: "8-popover-search", dir: dir, height: { ph })
+        save(SettingsView {}, width: 440, name: "9-settings", dir: dir, height: { 0 })
+
+        // Height must follow content both ways: long thread → new empty chat → back (⌘[).
+        m.overlay = .none; m.filter = ""
+        var long = thread; for _ in 0..<4 { long.turns += thread.turns }
+        m.chats = [long]; m.chatIndex = 0
+        var heights: [CGFloat] = []
+        let host = NSHostingView(rootView: PanelView(onHeight: { heights.append($0) }).environmentObject(m))
+        let win = NSWindow(contentRect: NSRect(x: -10000, y: -10000, width: Grid.panelWidth, height: 600), styleMask: .borderless, backing: .buffered, defer: false)
+        win.contentView = host
+        func settle(_ label: String) {
+            for _ in 0..<3 { host.layoutSubtreeIfNeeded(); RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
+            print(String(format: "height after %@: %.0f", label, heights.last ?? -1))
+        }
+        settle("long thread")
+        m.chats.append(Chat()); m.chatIndex = 1; settle("new empty chat")
+        m.chatIndex = 0; settle("back to the long chat")
+        m.chats = [Chat(turns: [t1])]; m.chatIndex = 0; settle("short chat")
     }
 
     private static func save<V: View>(_ view: V, width: CGFloat, name: String, dir: URL, height: () -> CGFloat) {
@@ -247,7 +265,7 @@ enum RenderProbe {
         win.contentView = host
         host.frame = NSRect(x: 0, y: 0, width: width, height: 800)
         for _ in 0..<3 { host.layoutSubtreeIfNeeded(); RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
-        let h = max(height(), 20)
+        let h = height() > 0 ? height() : host.fittingSize.height
         win.setContentSize(NSSize(width: width, height: h)); host.frame = NSRect(x: 0, y: 0, width: width, height: h)
         for _ in 0..<2 { host.layoutSubtreeIfNeeded(); RunLoop.current.run(until: Date().addingTimeInterval(0.15)) }
         guard let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: Int(width * 2), pixelsHigh: Int(h * 2), bitsPerSample: 8,

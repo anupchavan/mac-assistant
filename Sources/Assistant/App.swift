@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var model: AppModel!
     private var controller: PanelController!
     private var statusItem: NSStatusItem!
+    private let settings = SettingsWindow()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Fonts.register()
@@ -54,6 +55,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
         Task { await ContextCapture.warmUp() }
+        if Keys.sarvam == nil { settings.show() }      // first run with no key anywhere
         Log.info(Keys.report().replacingOccurrences(of: "\n", with: " · "))
     }
 
@@ -89,9 +91,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             i.representedObject = pane
             menu.addItem(i)
         }
-        let keys = item(Keys.sarvam == nil ? "✗  Sarvam key (add SARVAM_API_KEY to ~/.zshrc)" : "✓  Sarvam key", nil)
+        let keys = item(Keys.sarvam == nil ? "✗  Sarvam key (add it in Settings…)" : "✓  Sarvam key", Keys.sarvam == nil ? #selector(openSettings) : nil)
         menu.addItem(keys)
         menu.addItem(item(Keys.openAI == nil ? "✗  OpenAI key (computer use off)" : "✓  OpenAI key", nil))
+        menu.addItem(item("Settings…", #selector(openSettings), key: ","))
         menu.addItem(item("Reload Keys", #selector(reloadKeys)))
         menu.addItem(.separator())
         let right = item("Use right ⌥ instead of fn", #selector(toggleRightOption))
@@ -106,6 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func askTyped() { model.showTyped() }
     @objc private func newChat() { model.newChat(); model.showTyped() }
+    @objc private func openSettings() { settings.show() }
     @objc private func reloadKeys() { Keys.reload(); Log.info(Keys.report().replacingOccurrences(of: "\n", with: " · ")) }
     @objc private func quit() { NSApp.terminate(nil) }
 
