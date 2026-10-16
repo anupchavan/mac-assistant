@@ -256,6 +256,9 @@ enum RenderProbe {
         m.chats.append(Chat()); m.chatIndex = 1; settle("new empty chat")
         m.chatIndex = 0; settle("back to the long chat")
         m.chats = [Chat(turns: [t1])]; m.chatIndex = 0; settle("short chat")
+        m.chats = [long]; m.chatIndex = 0; settle("long chat again")
+        m.chats.append(Chat()); m.chatIndex = 1; settle("reopened after 2 min (new chat), want 56")
+        print("chat position on the new empty chat: \(m.chatPosition ?? "none")")
     }
 
     private static func save<V: View>(_ view: V, width: CGFloat, name: String, dir: URL, height: () -> CGFloat) {

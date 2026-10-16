@@ -103,9 +103,10 @@ final class AppModel: ObservableObject {
     var chat: Chat { chats.indices.contains(chatIndex) ? chats[chatIndex] : Chat() }
     var turns: [Turn] { chat.turns }
     var chatPosition: String? {
-        let real = chats.filter { !$0.turns.isEmpty }.count
-        guard real > 1 else { return nil }
-        return "\(min(chatIndex + 1, chats.count)) / \(chats.count)"
+        // Only chats with turns count; an empty new chat shows no position.
+        let real = chats.filter { !$0.turns.isEmpty }
+        guard real.count > 1, !chat.turns.isEmpty, let i = real.firstIndex(where: { $0.id == chat.id }) else { return nil }
+        return "\(i + 1) / \(real.count)"
     }
     var lastAnswerTyped: Bool { (turns.last.map { !$0.voice && !$0.answer.isEmpty }) ?? false }
     var idle: Bool { !listening && !busy && !speaking && overlay != .confirm && cua == nil }

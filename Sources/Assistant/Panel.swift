@@ -212,6 +212,8 @@ final class PanelController {
 
     func show() {
         if panel.isVisible { panel.alphaValue = 1; makeKey(); return }   // may be mid fade-out
+        // The chat may have changed while hidden (new chat after 2 min); lay it out now so `height` is current.
+        panel.contentView?.layoutSubtreeIfNeeded()
         let mouse = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main!
         screenVisible = screen.visibleFrame
@@ -232,6 +234,12 @@ final class PanelController {
         panel.orderFrontRegardless()   // no animation on appear (ui-spec v3 Motion)
         makeKey()
         installMonitors()
+        // Re-assert the measured height once the content has rendered in the window, so a stale size never sticks.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.panel.isVisible else { return }
+            if abs(self.panel.frame.height - self.height) > 0.5 { self.apply(height: self.height, animate: false) }
+            Log.info(String(format: "panel shown %.0f tall (content %.0f)", self.panel.frame.height, self.height))
+        }
     }
 
     func makeKey() { panel.makeKey() }
