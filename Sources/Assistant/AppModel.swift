@@ -81,6 +81,7 @@ final class AppModel: ObservableObject {
     private var cua: ComputerUser?
     private var cuaUserTravel: Double = 0     // points the user has moved the mouse during computer use
     private var gate = SpeechGate()
+    private var tapStoppedSpeech = false
     private var lastRetry: (() -> Void)?
     private var toolRanThisTurn = false     // never re-run a turn whose tool already acted
     private var visionAvailable: Bool {
@@ -116,6 +117,7 @@ final class AppModel: ObservableObject {
     func gesture(_ g: FnGesture.Output) {
         switch g {
         case .preroll:
+            tapStoppedSpeech = speaking
             if speaking { stopSpeaking() }
             guard cua == nil, overlay != .confirm else { return }
             if busy { turnTask?.cancel(); finishTurn(error: nil) }
@@ -132,10 +134,17 @@ final class AppModel: ObservableObject {
         case .handsFreeStop:
             endListening()
         case .typed:
+            // shift+fn / fn+Space toggles: opens typing, or closes the panel if it was already open.
+            let wasOpen = listening ? shownBeforeHold : visible
             discardPreroll()
-            showTyped()
+            if wasOpen { hotkey.resetGesture(); hide() } else { showTyped() }
         case .tap:
-            if listening && handsFree { endListening() } else if !listening { discardPreroll() }
+            if listening && handsFree { endListening() }
+            else if !listening {
+                discardPreroll()
+                // A plain fn tap on an open, idle panel closes it (a tap that stopped speech only stops speech).
+                if visible && !tapStoppedSpeech && !busy && overlay != .confirm && cua == nil { hide() }
+            }
         case .cancel:
             cancelAll(); hide()
         case .discard:

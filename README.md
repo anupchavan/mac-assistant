@@ -49,7 +49,8 @@ off the globe key; quit Kivi and Wispr Flow (they also listen to fn).
 |---|---|
 | Hold fn | push-to-talk; release sends |
 | Double-tap fn | hands-free; tap fn (or pause) to send |
-| fn + Space, or shift + fn | type instead (shift + fn never turns the mic on) |
+| fn + Space, or shift + fn | type instead (shift + fn never turns the mic on); again while open closes it |
+| Tap fn while open | closes it (or stops speech if it's talking) |
 | fn while it's speaking | stops speech (hold to ask a follow-up) |
 | Esc | close (stops speech, listening and the answer); on the confirm card it cancels, in a popover it closes the popover, during computer use it stops it |
 | ⌘[ / ⌘] / ⌘N | previous / next / new chat |
