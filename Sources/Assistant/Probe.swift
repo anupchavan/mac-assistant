@@ -107,6 +107,43 @@ enum Probe {
             let t0 = Date()
             let (heard, lang) = await stt.finish()
             print(String(format: "final after %.0f ms: \"%@\" (%@)", Date().timeIntervalSince(t0) * 1000, heard, lang ?? "?"))
+        case "audio-devices":
+            print("default input is Bluetooth: \(AudioDevices.defaultInputIsBluetooth); built-in mic found: \(AudioDevices.builtInInput != nil) → recording from \(AudioDevices.defaultInputIsBluetooth && AudioDevices.builtInInput != nil ? "the built-in mic" : "the default input")")
+        case "tts-dump":
+            // Raw Bulbul stream, no playback: chunk sizes, headers, odd lengths, arrival vs audio time.
+            let text = rest.first ?? "Speculative decoding uses a small draft model to propose several tokens, and the large model checks them all in one pass. The output is identical, but it arrives two to three times faster, which matters a lot for voice assistants like this one."
+            let tts = SarvamTTS(language: "en-IN")
+            let t0 = Date()
+            let done = DispatchSemaphore(value: 0)
+            var chunks: [(at: Double, data: Data)] = []
+            tts.onAudio = { chunks.append((Date().timeIntervalSince(t0), $0)) }
+            tts.onFinal = { done.signal() }
+            tts.onError = { print("tts error: \($0)"); done.signal() }
+            try tts.connect()
+            // Sentence by sentence, as the app feeds it while the answer streams.
+            for sentence in text.components(separatedBy: ". ") { tts.speak(sentence.hasSuffix(".") ? sentence : sentence + "."); try await Task.sleep(nanoseconds: 150_000_000) }
+            tts.flush()
+            _ = await withCheckedContinuation { c in DispatchQueue.global().async { c.resume(returning: done.wait(timeout: .now() + 30)) } }
+            tts.close()
+            var audioEnd = 0.0, firstAt = chunks.first?.at ?? 0, underruns = 0
+            var all = Data()
+            for (i, c) in chunks.enumerated() {
+                let riff = c.data.prefix(4) == "RIFF".data(using: .ascii)!
+                var pcm = c.data; if riff { pcm = pcm.subdata(in: 44..<pcm.count) }
+                let dur = Double(pcm.count / 2) / 22050
+                // Playback would start at the first chunk; a chunk arriving after the audio so far has finished is an underrun.
+                let playClock = c.at - firstAt
+                if i > 0 && playClock > audioEnd { underruns += 1 }
+                audioEnd = max(audioEnd, playClock) + (i == 0 ? dur : 0) + (i > 0 ? dur : 0)
+                if i < 40 { print(String(format: "#%02d at %5.2fs bytes %6d%@%@ dur %.2fs  audio-ahead %.2fs", i, c.at, c.data.count, riff ? " RIFF" : "", c.data.count % 2 == 1 ? " ODD" : "", dur, audioEnd - playClock)) }
+                all.append(pcm)
+            }
+            print("chunks \(chunks.count), odd-length \(chunks.filter { $0.data.count % 2 == 1 }.count), with RIFF header \(chunks.filter { $0.data.prefix(4) == "RIFF".data(using: .ascii)! }.count), underruns \(underruns)")
+            if let out = rest.dropFirst().first { try Microphone.wav(all, sampleRate: 22050).write(to: URL(fileURLWithPath: out)); print("wrote \(out)") }
+            if let out = rest.dropFirst().first {
+                try chunks.map { String($0.data.count) }.joined(separator: "\n").write(toFile: out + ".sizes", atomically: true, encoding: .utf8)
+                try chunks.map { $0.data.prefix(16).map { String(format: "%02x", $0) }.joined() }.joined(separator: "\n").write(toFile: out + ".heads", atomically: true, encoding: .utf8)
+            }
         case "media-test":
             // Two synthetic 4 s clips → keep 0–2.5 of the first + all of the second → expect 6.5 s.
             let dir = URL(fileURLWithPath: rest.first ?? NSTemporaryDirectory())

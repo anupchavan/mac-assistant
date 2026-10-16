@@ -43,6 +43,12 @@ Microphone. macOS ties these grants to the code signature, so sign with a stable
 Demo Mac setup: System Settings → Keyboard → "Press 🌐 key to" = Do Nothing; move the Dictation shortcut
 off the globe key; quit Kivi and Wispr Flow (they also listen to fn).
 
+## Audio
+
+With Bluetooth headphones (AirPods) as the default mic, Quicky records from the Mac's built-in mic instead, so the
+headphones stay in high-quality mode; recording from them switches them into call mode and back, which glitches
+the spoken answer. Playback also recovers by itself if the output device changes mid-answer.
+
 ## Gestures
 
 | Gesture | Does |
@@ -93,6 +99,8 @@ $B --probe agent "close this tab" [v1]   # which tool the model picks (never run
 $B --probe cua-access     # can this OpenAI key use the computer-use models?
 $B --probe cua-plan "block this user"   # the first real step computer use would take (never executed)
 $B --probe stt-ws "close this tab"     # TTS speech streamed into the realtime STT socket (no mic)
+$B --probe tts-dump "<text>" <out.wav>  # raw Bulbul stream: chunk sizes, headers, timing (no playback)
+$B --probe audio-devices   # which mic it will record from
 $B --probe media-test <dir>          # trim + join two synthetic clips with the video tool
 $B --probe agent-fixture "<ask>"    # which tool the model picks for an ask in a fixed Finder context
 $B --probe render <dir>   # offscreen PNGs of the panel states (nothing appears on screen)

@@ -15,6 +15,14 @@ final class Microphone {
     func start() throws {
         guard !running else { return }
         let input = engine.inputNode
+        // Recording from Bluetooth headphones (AirPods) switches them into call mode, and they switch back a
+        // second or two after we stop, right when the answer starts speaking, which glitches playback. So when
+        // the default input is Bluetooth, record from the built-in mic and leave the headphones in music mode.
+        if AudioDevices.defaultInputIsBluetooth, var builtIn = AudioDevices.builtInInput, let unit = input.audioUnit {
+            let status = AudioUnitSetProperty(unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0,
+                                              &builtIn, UInt32(MemoryLayout<AudioDeviceID>.size))
+            if status != noErr { Log.error("mic: couldn't select the built-in microphone (\(status))") }
+        }
         let format = input.outputFormat(forBus: 0)
         guard format.sampleRate > 0 else { throw NSError(domain: "mic", code: 1, userInfo: [NSLocalizedDescriptionKey: "No microphone input"]) }
         converter = AVAudioConverter(from: format, to: target)
@@ -111,6 +119,9 @@ final class PCMPlayer {
     private var playedFrames: Int64 = 0
     private var started = false
     private var generation = 0
+    private var queued: [(id: Int, buf: AVAudioPCMBuffer)] = []   // scheduled, not yet played
+    private var nextID = 0
+    private var configObserver: NSObjectProtocol?
     /// Called on the main queue when everything scheduled has played.
     var onDrained: (() -> Void)?
     var sampleRate: Double { format.sampleRate }
@@ -119,6 +130,43 @@ final class PCMPlayer {
         format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: sampleRate, channels: 1, interleaved: false)!
         engine.attach(node)
         engine.connect(node, to: engine.mainMixerNode, format: format)
+        // The output device can change under us (headphones switching modes, plugging in, AirPods handing
+        // off). The engine stops and the node drops its queue; restart and replay what hadn't played yet.
+        configObserver = NotificationCenter.default.addObserver(forName: .AVAudioEngineConfigurationChange, object: engine, queue: nil) { [weak self] _ in
+            self?.recoverFromConfigurationChange()
+        }
+    }
+
+    deinit { if let configObserver { NotificationCenter.default.removeObserver(configObserver) } }
+
+    private func recoverFromConfigurationChange() {
+        lock.lock()
+        generation += 1
+        let pending = queued
+        queued.removeAll()
+        let gen = generation
+        lock.unlock()
+        Log.info("audio output changed; replaying \(pending.count) buffer(s)")
+        node.stop()
+        engine.connect(node, to: engine.mainMixerNode, format: format)
+        do { try engine.start() } catch { Log.error("audio restart failed: \(error.localizedDescription)"); return }
+        for item in pending { schedule(item.buf, generation: gen) }
+        if !pending.isEmpty { node.play(); started = true } else { started = false }
+    }
+
+    private func schedule(_ buf: AVAudioPCMBuffer, generation gen: Int) {
+        lock.lock(); let id = nextID; nextID += 1; queued.append((id, buf)); lock.unlock()
+        let n = Int64(buf.frameLength)
+        node.scheduleBuffer(buf) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            guard gen == self.generation else { self.lock.unlock(); return }
+            self.queued.removeAll { $0.id == id }
+            self.playedFrames += n
+            let drained = self.playedFrames >= self.scheduledFrames
+            self.lock.unlock()
+            if drained { DispatchQueue.main.async { self.onDrained?() } }
+        }
     }
 
     /// Seconds of audio played so far in this utterance.
@@ -138,20 +186,12 @@ final class PCMPlayer {
         }
         if !engine.isRunning { try? engine.start() }
         lock.lock(); scheduledFrames += Int64(n); let gen = generation; lock.unlock()
-        node.scheduleBuffer(buf) { [weak self] in
-            guard let self else { return }
-            self.lock.lock()
-            guard gen == self.generation else { self.lock.unlock(); return }
-            self.playedFrames += Int64(n)
-            let drained = self.playedFrames >= self.scheduledFrames
-            self.lock.unlock()
-            if drained { DispatchQueue.main.async { self.onDrained?() } }
-        }
+        schedule(buf, generation: gen)
         if !started { node.play(); started = true }
     }
 
     func stop() {
-        lock.lock(); generation += 1; scheduledFrames = 0; playedFrames = 0; lock.unlock()
+        lock.lock(); generation += 1; scheduledFrames = 0; playedFrames = 0; queued.removeAll(); lock.unlock()
         node.stop()
         started = false
     }
@@ -200,4 +240,41 @@ struct SpeechGate {
         "hello", "hi", "hey", "hey how are you", "okay", "ok", "hmm", "um", "uh", "so", "yeah", "yes", "no",
         "namaste", "dhanyavaad", "dhanyavad", "shukriya", "haan", "accha", "subscribe",
     ]
+}
+
+/// Core Audio device lookups for choosing the mic.
+enum AudioDevices {
+    static var defaultInputIsBluetooth: Bool {
+        guard let id = defaultInput else { return false }
+        let t = transport(id)
+        return t == kAudioDeviceTransportTypeBluetooth || t == kAudioDeviceTransportTypeBluetoothLE
+    }
+
+    static var defaultInput: AudioDeviceID? {
+        var id = AudioDeviceID(0), size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDefaultInputDevice, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        return AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &id) == noErr && id != 0 ? id : nil
+    }
+
+    /// The Mac's own microphone, if it has one.
+    static var builtInInput: AudioDeviceID? {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(0)
+        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr else { return nil }
+        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr else { return nil }
+        return ids.first { transport($0) == kAudioDeviceTransportTypeBuiltIn && hasInput($0) }
+    }
+
+    private static func transport(_ id: AudioDeviceID) -> UInt32 {
+        var t = UInt32(0), size = UInt32(MemoryLayout<UInt32>.size)
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyTransportType, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
+        return AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &t) == noErr ? t : 0
+    }
+
+    private static func hasInput(_ id: AudioDeviceID) -> Bool {
+        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams, mScope: kAudioDevicePropertyScopeInput, mElement: kAudioObjectPropertyElementMain)
+        var size = UInt32(0)
+        return AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr && size > 0
+    }
 }
