@@ -1,6 +1,6 @@
-# Assistant (unnamed Mac app)
+# Quicky
 
-A menu-bar app that sees the window you're in and answers by voice or text. Hold **fn**, ask, let go.
+Quicky is a menu-bar Mac app that sees the window you're in and answers by voice or text. Hold **fn**, ask, let go.
 Sarvam is the ears, brain and voice (Saaras STT, sarvam-105b / gemma4, Bulbul TTS); OpenAI computer use
 is the hands when an ask needs clicking. Specs are in `docs/` (ui-spec v4 is the visual source of truth).
 
@@ -59,6 +59,8 @@ off the globe key; quit Kivi and Wispr Flow (they also listen to fn).
 
 Each summon continues the current chat if you used it in the last 2 minutes; after that it opens a new one (⌘[ goes back). Chats are saved to
 `~/Library/Application Support/dev.anup.assistant/chats.json` (no screenshots).
+To debug computer use, `defaults write dev.anup.assistant cuaDebug -bool true` saves each step's screenshot
+with a ring where it acted to `…/dev.anup.assistant/cua-debug/` (local only, replaced every run).
 
 ## How a turn flows
 

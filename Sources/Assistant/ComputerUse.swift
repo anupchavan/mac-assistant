@@ -22,7 +22,15 @@ final class ComputerUser {
     private var stopReason = ""
     weak var monitor: HotkeyMonitor?
 
-    func stop(_ reason: String) { if !stopRequested { stopRequested = true; stopReason = reason } }
+    private var inflight: Task<[String: Any], Error>?
+
+    /// Esc / mouse: takes effect immediately, including while waiting for the model (the request is cancelled).
+    func stop(_ reason: String) {
+        guard !stopRequested else { return }
+        stopRequested = true; stopReason = reason
+        inflight?.cancel()
+        Log.info("cua stop: \(reason)")
+    }
 
     // MARK: Handoff (Sarvam turns the ask into one instruction)
 
@@ -81,7 +89,14 @@ final class ComputerUser {
             onStatus?("Thinking")
             let response: [String: Any]
             do {
-                response = try await Self.post(body, key: key)
+                let request = Task { [body] in try await Self.post(body, key: key) }
+                inflight = request
+                response = try await request.value
+                inflight = nil
+            } catch is CancellationError {
+                return .stopped(stopReason.isEmpty ? "stopped" : stopReason)
+            } catch let e as URLError where e.code == .cancelled {
+                return .stopped(stopReason.isEmpty ? "stopped" : stopReason)
             } catch let e as APIError where !triedFallback && (e.status == 404 || e.status == 400 || e.status == 403) && body["previous_response_id"] == nil {
                 Log.error("cua \(model) refused (\(e.status)); retrying with fallback model")
                 triedFallback = true
@@ -107,6 +122,7 @@ final class ComputerUser {
                 let callID = call["call_id"] as? String ?? ""
                 var acts = call["actions"] as? [[String: Any]] ?? []
                 if acts.isEmpty, let single = call["action"] as? [String: Any] { acts = [single] }
+                Self.saveDebugFrame(shot.0, actions: acts, step: actions + 1)
                 for act in acts {
                     if stopRequested { return .stopped(stopReason) }
                     actions += 1
@@ -145,6 +161,32 @@ final class ComputerUser {
         return try JSONSerialization.jsonObject(with: data) as? [String: Any] ?? [:]
     }
 
+    // MARK: Debug frames (opt-in: defaults write dev.anup.assistant cuaDebug -bool true)
+
+    static var debugDir: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("dev.anup.assistant/cua-debug", isDirectory: true)
+    }
+
+    /// The screenshot the agent acted on, with a red ring where each action lands. Local only, overwritten each run.
+    static func saveDebugFrame(_ img: CGImage, actions: [[String: Any]], step: Int) {
+        guard UserDefaults.standard.bool(forKey: "cuaDebug") else { return }
+        if step == 1 { try? FileManager.default.removeItem(at: debugDir) }
+        try? FileManager.default.createDirectory(at: debugDir, withIntermediateDirectories: true)
+        guard let ctx = CGContext(data: nil, width: img.width, height: img.height, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return }
+        ctx.draw(img, in: CGRect(x: 0, y: 0, width: img.width, height: img.height))
+        ctx.setStrokeColor(red: 1, green: 0.1, blue: 0.1, alpha: 1); ctx.setLineWidth(4)
+        for a in actions {
+            guard let x = (a["x"] as? NSNumber)?.doubleValue, let y = (a["y"] as? NSNumber)?.doubleValue else { continue }
+            ctx.strokeEllipse(in: CGRect(x: x - 14, y: Double(img.height) - y - 14, width: 28, height: 28))
+        }
+        guard let out = ctx.makeImage() else { return }
+        let names = actions.compactMap { $0["type"] as? String }.joined(separator: "+")
+        let url = debugDir.appendingPathComponent(String(format: "step-%02d-%@.png", step, names))
+        try? NSBitmapImageRep(cgImage: out).representation(using: .png, properties: [:])?.write(to: url)
+    }
+
     // MARK: Executor (CGEvents, mapped from screenshot pixels to screen points)
 
     /// point = windowOrigin + (x, y) / scale. Refuses anything outside the window.
@@ -165,18 +207,25 @@ final class ComputerUser {
         switch type {
         case "click", "double_click":
             guard let p = point() else { return (false, "a click outside the window") }
-            onStatus?("Clicking \(Self.label(at: p) ?? "")".trimmingCharacters(in: .whitespaces))
+            let label = Self.label(at: p)
+            onStatus?("Clicking \(label ?? "")".trimmingCharacters(in: .whitespaces))
+            Log.info(String(format: "cua click image (%.0f, %.0f) → screen (%.0f, %.0f) on \"%@\"", num("x"), num("y"), p.x, p.y, label ?? "?"))
             let button = (act["button"] as? String) ?? "left"
             let (downT, upT, btn): (CGEventType, CGEventType, CGMouseButton) = button == "right"
                 ? (.rightMouseDown, .rightMouseUp, .right) : (.leftMouseDown, .leftMouseUp, .left)
+            // Web apps ignore zero-duration clicks: hover first, then press and release like a hand would.
             CGEvent(mouseEventSource: src, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+            try? await Task.sleep(nanoseconds: 80_000_000)
             let clicks = type == "double_click" ? 2 : 1
             for i in 1...clicks {
                 let d = CGEvent(mouseEventSource: src, mouseType: downT, mouseCursorPosition: p, mouseButton: btn)
                 let u = CGEvent(mouseEventSource: src, mouseType: upT, mouseCursorPosition: p, mouseButton: btn)
                 d?.setIntegerValueField(.mouseEventClickState, value: Int64(i))
                 u?.setIntegerValueField(.mouseEventClickState, value: Int64(i))
-                d?.post(tap: .cghidEventTap); u?.post(tap: .cghidEventTap)
+                d?.post(tap: .cghidEventTap)
+                try? await Task.sleep(nanoseconds: 50_000_000)
+                u?.post(tap: .cghidEventTap)
+                if i < clicks { try? await Task.sleep(nanoseconds: 60_000_000) }
             }
         case "move":
             guard let p = point() else { return (false, "a move outside the window") }
