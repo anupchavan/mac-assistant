@@ -32,6 +32,7 @@ struct SettingsView: View {
     @State private var openAI = ""
     @State private var status = ""
     @State private var refresh = 0
+    @State private var pace = SarvamTTS.pace
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -42,6 +43,17 @@ struct SettingsView: View {
             }
             KeyField(title: "Sarvam", hint: "Required", names: Keys.sarvamNames, text: $sarvam, refresh: refresh)
             KeyField(title: "OpenAI", hint: "Optional: clicking for you", names: Keys.openAINames, text: $openAI, refresh: refresh)
+            Theme.separator.frame(height: 1)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Voice speed").font(Fonts.bodyStrong).foregroundStyle(Theme.textPrimary)
+                Picker("", selection: $pace) {
+                    Text("Slower").tag(0.8)
+                    Text("Normal").tag(0.9)
+                    Text("Faster").tag(1.05)
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                .onChange(of: pace) { _, v in UserDefaults.standard.set(v, forKey: "ttsPace") }
+            }
             HStack(spacing: 12) {
                 Text(status).font(Fonts.body).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 Spacer(minLength: 8)

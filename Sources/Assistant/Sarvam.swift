@@ -283,6 +283,12 @@ final class SarvamSTT: NSObject, URLSessionWebSocketDelegate {
 // MARK: - Text to speech (Bulbul WebSocket)
 
 final class SarvamTTS: NSObject, URLSessionWebSocketDelegate {
+    /// Bulbul already speaks ~3.3 words/s at pace 1.0; 0.9 (~3.0) sounds conversational.
+    /// Settings → Voice speed, else ASSISTANT_TTS_PACE, else 0.9.
+    static var pace: Double {
+        if let v = UserDefaults.standard.object(forKey: "ttsPace") as? Double { return v }
+        return Double(Keys.setting("ASSISTANT_TTS_PACE", default: "0.9")) ?? 0.9
+    }
     var onAudio: ((Data) -> Void)?
     var onFinal: (() -> Void)?
     var onError: ((String) -> Void)?
@@ -310,7 +316,7 @@ final class SarvamTTS: NSObject, URLSessionWebSocketDelegate {
         send(["type": "config", "data": [
             "language_code": language,
             "speaker": Keys.setting("ASSISTANT_TTS_SPEAKER", default: "shubh"),
-            "pace": Double(Keys.setting("ASSISTANT_TTS_PACE", default: "1.1")) ?? 1.1,
+            "pace": SarvamTTS.pace,
             "speech_sample_rate": sampleRate,
             "output_audio_codec": "linear16",
             "min_buffer_size": 30,
