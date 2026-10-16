@@ -141,7 +141,7 @@ final class PanelController {
         }).environmentObject(model)
         let hosting = NSHostingView(rootView: root)
         hosting.sizingOptions = []
-        p.contentView = Self.glass(around: hosting, radius: Grid.popoverRadius)
+        p.contentView = Self.glass(around: hosting, radius: Grid.popoverRadius, liquid: false)
         return p
     }
 
@@ -158,7 +158,9 @@ final class PanelController {
     }
 
     /// Real frosted glass behind the SwiftUI content (ui-spec v4 "Glass").
-    static func glass(around content: NSView, radius: CGFloat = Grid.panelRadius) -> NSView {
+    /// `liquid: false` uses the masked visual-effect blur even on macOS 26 (the ⌘K card: as a child window
+    /// the Liquid Glass view drew square top corners).
+    static func glass(around content: NSView, radius: CGFloat = Grid.panelRadius, liquid: Bool = true) -> NSView {
         // Nothing may paint outside the rounded shape (no square corners behind the glass).
         content.wantsLayer = true
         content.layer?.backgroundColor = .clear
@@ -166,7 +168,7 @@ final class PanelController {
         content.layer?.cornerCurve = .continuous
         content.layer?.masksToBounds = true
         #if compiler(>=6.2)
-        if #available(macOS 26.0, *) {
+        if liquid, #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
             glass.cornerRadius = radius
             glass.wantsLayer = true
