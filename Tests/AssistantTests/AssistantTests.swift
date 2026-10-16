@@ -121,7 +121,7 @@ final class APIErrorTests: XCTestCase {
     func testNoKeyFragmentsOrJSON() {
         let body = #"{"error":{"message":"Incorrect API key provided: sk-proj-AbC1********************xYz9. You can find your API key at https://platform.openai.com/account/api-keys.","type":"invalid_request_error"}}"#
         let e = APIError(status: 401, body: body, provider: .openAI)
-        XCTAssertEqual(e.errorDescription, "Your OpenAI key was refused. Put a valid one in ~/.zshrc as OPENAI_API_KEY, then choose Reload Keys.")
+        XCTAssertEqual(e.errorDescription, "Your OpenAI key was refused. Paste a working one in Settings (⌘, from the menu-bar ?).")
         XCTAssertFalse(e.sanitizedMessage.contains("sk-"))
         XCTAssertFalse(e.sanitizedMessage.contains("***"))
         XCTAssertLessThanOrEqual(e.sanitizedMessage.count, 80)

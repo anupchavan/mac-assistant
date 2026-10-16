@@ -15,10 +15,10 @@ struct APIError: LocalizedError {
     var errorDescription: String? {
         let detail = sanitizedMessage.isEmpty ? "." : ": \(sanitizedMessage)"
         switch (provider, status) {
-        case (.openAI, 401): return "Your OpenAI key was refused. Put a valid one in ~/.zshrc as OPENAI_API_KEY, then choose Reload Keys."
+        case (.openAI, 401): return "Your OpenAI key was refused. Paste a working one in Settings (⌘, from the menu-bar ?)."
         case (.openAI, 403), (.openAI, 404): return "Your OpenAI account can't use the computer-use model yet."
         case (.openAI, 402), (.openAI, 429): return "OpenAI rate limit or no credits."
-        case (.sarvam, 401), (.sarvam, 403): return "Your Sarvam key was refused. Put a valid one in ~/.zshrc as SARVAM_API_KEY, then choose Reload Keys."
+        case (.sarvam, 401), (.sarvam, 403): return "Your Sarvam key was refused. Paste a working one in Settings (⌘, from the menu-bar ?)."
         case (.sarvam, _) where isOutOfCredits: return "Sarvam rate limit or no credits. Add credits and press ↵ to retry."
         case (_, 500...): return "\(provider == .openAI ? "OpenAI" : "Sarvam") is having trouble (\(status)). Press ↵ to retry."
         default: return "\(provider == .openAI ? "OpenAI" : "Sarvam") returned an error (\(status))\(detail)"
