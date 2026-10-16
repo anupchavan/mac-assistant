@@ -53,10 +53,11 @@ struct SettingsView: View {
                         Text("Save").font(Fonts.bodyStrong).foregroundStyle(Theme.textPrimary)
                         Keycap(label: "↵")
                     }
-                    .padding(.leading, 12).padding(.trailing, 6).frame(height: Grid.chipHeight)
-                    .background(Capsule().fill(Theme.chipFill))
-                    .overlay(Capsule().strokeBorder(Theme.chipBorder, lineWidth: 1))
-                    .contentShape(Capsule())
+                    // 32 tall, keycap inset 5: radius 11 = keycap 6 + 5, so the corners are concentric.
+                    .padding(.leading, 14).padding(.trailing, 5).frame(height: 32)
+                    .background(RoundedRectangle(cornerRadius: 11, style: .continuous).fill(Theme.chipFill))
+                    .overlay(RoundedRectangle(cornerRadius: 11, style: .continuous).strokeBorder(Theme.chipBorder, lineWidth: 1))
+                    .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.defaultAction)

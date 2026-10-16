@@ -7,7 +7,7 @@ import SwiftUI
 final class AssistantPanel: NSPanel {
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Grid.panelWidth, height: 160),
-                   styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView], backing: .buffered, defer: false)
+                   styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
         isFloatingPanel = true
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
@@ -28,7 +28,7 @@ final class AssistantPanel: NSPanel {
 final class PopoverPanel: NSPanel {
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Grid.popoverWidth, height: 200),
-                   styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView], backing: .buffered, defer: false)
+                   styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
         isFloatingPanel = true
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
@@ -169,6 +169,10 @@ final class PanelController {
         if #available(macOS 26.0, *) {
             let glass = NSGlassEffectView()
             glass.cornerRadius = radius
+            glass.wantsLayer = true
+            glass.layer?.cornerRadius = radius
+            glass.layer?.cornerCurve = .continuous
+            glass.layer?.masksToBounds = true
             content.translatesAutoresizingMaskIntoConstraints = true
             content.autoresizingMask = [.width, .height]
             glass.contentView = content
@@ -177,6 +181,9 @@ final class PanelController {
         #endif
         let container = NSView()
         container.wantsLayer = true
+        container.layer?.cornerRadius = radius
+        container.layer?.cornerCurve = .continuous
+        container.layer?.masksToBounds = true
         let blur = NSVisualEffectView()
         blur.material = .hudWindow
         blur.blendingMode = .behindWindow

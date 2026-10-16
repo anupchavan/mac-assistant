@@ -154,6 +154,7 @@ struct PanelView: View {
         .overlay(RoundedRectangle(cornerRadius: Grid.panelRadius, style: .continuous).strokeBorder(Theme.borderPanel, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: Grid.panelRadius, style: .continuous))
         .focusEffectDisabled()      // no blue focus rings anywhere in the panel (inherited by every button/row)
+        .ignoresSafeArea()
         .environment(\.colorScheme, .dark)
     }
 }
@@ -549,6 +550,7 @@ struct ActionsPopover: View {
         .overlay(RoundedRectangle(cornerRadius: Grid.popoverRadius, style: .continuous).strokeBorder(Theme.borderPanel, lineWidth: 1))
         .clipShape(RoundedRectangle(cornerRadius: Grid.popoverRadius, style: .continuous))
         .focusEffectDisabled()
+        .ignoresSafeArea()
         .environment(\.colorScheme, .dark)
     }
 }
