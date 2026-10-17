@@ -1,0 +1,38 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "volatile_fields": ["messages.0.content"],
+      "body_json": {
+        "model": "sarvam-105b",
+        "messages": [
+          {"role": "system", "content": "fixture ignores byte-stable system prompt"},
+          {"role": "user", "content": "OUTPUT_MODE: typed\n\nASK: hi"}
+        ],
+        "stream": true,
+        "max_tokens": 1600,
+        "reasoning_effort": null
+      }
+    },
+    "response": {"status": 401, "headers": {}, "sse_chunks": []}
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "volatile_fields": ["messages.0.content"],
+      "body_json": {
+        "model": "sarvam-105b",
+        "messages": [
+          {"role": "system", "content": "fixture ignores byte-stable system prompt"},
+          {"role": "user", "content": "OUTPUT_MODE: typed\n\nASK: hi"}
+        ],
+        "stream": true,
+        "max_tokens": 1600,
+        "reasoning_effort": null
+      }
+    },
+    "response": {"status": 401, "headers": {}, "sse_chunks": []}
+  }
+]

@@ -1,0 +1,29 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "volatile_fields": ["messages.0.content"],
+      "body_json": {
+        "model": "sarvam-105b",
+        "messages": [
+          {"role": "system", "content": "fixture ignores byte-stable system prompt"},
+          {"role": "user", "content": "OUTPUT_MODE: typed\n\nASK: …"}
+        ],
+        "stream": true,
+        "max_tokens": 1600,
+        "reasoning_effort": null
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {"Content-Type": "text/event-stream"},
+      "sse_chunks": [
+        {"at_ms": 100, "data": "{\"choices\":[{\"delta\":{\"content\":\"One \"}}]}"},
+        {"at_ms": 250, "data": "{\"choices\":[{\"delta\":{\"content\":\"two \"}}]}"},
+        {"at_ms": 400, "data": "{\"choices\":[{\"delta\":{\"content\":\"three \"}}]}"},
+        {"at_ms": 500, "data": "[DONE]"}
+      ]
+    }
+  }
+]
