@@ -26,7 +26,7 @@ Preconditions:
 - **Deterministic cancel.** Run `quicky ask "Explain photosynthesis in detail, in at least ten sentences." --provider replay:Fixtures/replay/cancel-long --cancel-after-ms 300`. It ends with `done` `"outcome":"cancelled"` after the token `" specifically"`, and exits 2 every run.
 - **Key refused.** Run `quicky ask hi --provider replay:Fixtures/replay/unauthorized-twice --key bad`. You see exactly one `step` saying "Reloaded the Sarvam key", then an `error` with a sanitized message, then `done` `"outcome":"failed"`, and exit 1.
 - **Live Sarvam.** Run `quicky ask "Say hello in Hindi"`. It shows at least one `token` with Devanagari text, `done` `"outcome":"answered"` with real `ttft_ms`, and exits 0.
-- **Real app engine.** Record the verify log's size, then run `quicky --app --run ta-$(date +%s) ask "Say hello in Hindi"` with that fresh run id. You get the same notice shape with `"device":"mac"`, and the log past the recorded offset holds the same lines for that id.
+- **Real app engine.** Record the verify log's size, then run `quicky --app --run ta-$(date +%s) ask "Say hello in Hindi"` with that fresh run id. You get the same `turn`, `token`, `done` and `quiet` notices (plus a `session` line with `"device":"mac"` when the app starts a new chat), and the log past the recorded offset holds the same lines for that id.
 - **Physical.** Run `keys fn+space`, `keys type "Say hello in Hindi"`, then `keys return`. Within 10 s the verify log gets a `done` `"outcome":"answered"`, the TextEdit document stays empty, and TextEdit stays frontmost (lane 2 of `scripts/verify-slice1.sh`). Screenshot the panel. It shows the question in the thread with the answer below, and the input row empty.
 
 ## Gotchas

@@ -5,7 +5,7 @@ description: Drive the real Quicky menu-bar app (macOS, Swift) and its JSON Line
 
 # Verify Quicky
 
-Quicky is an accessory (menu-bar) app. fn+Space opens a non-activating panel at the cursor. You type a question, and the answer streams in from Sarvam. There are three ways to drive it. Use the cheapest one that reaches the behaviour you're proving, and name the one you used in your evidence.
+Quicky is an accessory (menu-bar) app. fn+Space opens a non-activating panel at the cursor. You type a question, and the answer streams in from Sarvam. There are four ways to drive it. Use the cheapest one that reaches the behaviour you're proving, and name the one you used in your evidence.
 
 | path | proves | needs |
 |---|---|---|
