@@ -41,11 +41,11 @@ func runCLI() async -> Int32 {
     let relay = CancelRelay(); var replay: ReplayServer?
     if options.provider.hasPrefix("replay:") {
         do {
-            let server = try ReplayServer(directory: URL(fileURLWithPath: String(options.provider.dropFirst("replay:".count))), cancelAfterMS: options.cancelAfterMS, relay: relay)
+            let server = try ReplayServer(directory: URL(fileURLWithPath: String(options.provider.dropFirst("replay:".count))), ask: options.text, cancelAfterMS: options.cancelAfterMS, relay: relay)
             let port = try await server.start(); config.baseURL = URL(string: "http://127.0.0.1:\(port)")!; config.sarvamKey = options.key ?? "replay-key"; replay = server
         } catch { write(Notice(run: options.run, type: "error", fields: ["message": .string(UserError.sanitize(error.localizedDescription))])); return 1 }
     }
-    let engine = Engine(device: FixtureDevice(), config: config, storeDirectory: storeURL, chats: stored?.chats ?? ChatLog(), fixedWall: options.now)
+    let engine = Engine(device: FixtureDevice(), config: config, storeDirectory: storeURL, chats: stored?.chats ?? ChatLog(), storeRevision: stored?.revision ?? 0, fixedWall: options.now)
     await relay.set { await MainActor.run { _ = engine.send(.escape, run: options.run) } }
     if options.trace { engine.onTrace = { write($0) } }
     if options.provider == "live", let delay = options.cancelAfterMS { Task { try? await Task.sleep(for: .milliseconds(delay)); guard !Task.isCancelled else { return }; _ = engine.send(.escape, run: options.run) } }

@@ -21,6 +21,11 @@ public struct SarvamChat: Sendable {
                     var request = URLRequest(url: config.baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))))
                     request.httpMethod = "POST"; request.timeoutInterval = 60; request.httpBody = body
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                    request.setValue(String(body.count), forHTTPHeaderField: "Content-Length")
+                    var fingerprintRequest = chat
+                    if fingerprintRequest.messages.first?.role == "system" { fingerprintRequest.messages[0].content = "" }
+                    let fingerprintData = try JSONEncoder.stable.encode(fingerprintRequest)
+                    request.setValue(fnv64(fingerprintData), forHTTPHeaderField: "X-Quicky-Body-Fingerprint")
                     request.setValue(key, forHTTPHeaderField: "api-subscription-key")
                     let start = ProcessInfo.processInfo.systemUptime
                     let (bytes, response) = try await URLSession.shared.bytes(for: request)
@@ -60,6 +65,12 @@ public struct SarvamChat: Sendable {
             continuation.onTermination = { _ in task.cancel() }
         }
     }
+}
+
+private func fnv64(_ data: Data) -> String {
+    var hash: UInt64 = 14_695_981_039_346_656_037
+    for byte in data { hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211 }
+    return String(hash, radix: 16)
 }
 
 private struct StreamChunk: Decodable {

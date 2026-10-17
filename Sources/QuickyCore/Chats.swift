@@ -93,7 +93,10 @@ public actor Store {
 
     @discardableResult
     public func write(_ state: StoredState) throws -> Bool {
-        guard state.revision >= newestRevision else { return false }
+        if newestRevision < 0, let data = try? Data(contentsOf: directory.appendingPathComponent("state.json")), let disk = try? JSONDecoder.stable.decode(StoredState.self, from: data) {
+            newestRevision = disk.revision
+        }
+        guard state.revision > newestRevision else { return false }
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let data = try JSONEncoder.stable.encode(state)
         try data.write(to: directory.appendingPathComponent("state.json"), options: .atomic)

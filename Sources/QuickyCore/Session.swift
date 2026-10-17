@@ -44,7 +44,7 @@ public struct Session: Sendable, Equatable {
     private var announcedSession = false
     private var chatModel: String
 
-    public init(chats: ChatLog = ChatLog(), chatModel: String = "sarvam-105b") { self.chats = chats; self.chatModel = chatModel }
+    public init(chats: ChatLog = ChatLog(), chatModel: String = "sarvam-105b", revision: Int = 0) { self.chats = chats; self.chatModel = chatModel; self.revision = revision }
     public var nextDeadline: Double? { gesture.deadline }
 
     public mutating func handle(_ event: Event, at now: Now) -> Reaction {

@@ -16,6 +16,8 @@ public final class Engine {
     @ObservationIgnored private var runs: [EffectID: String?] = [:]
     @ObservationIgnored private var tickTask: Task<Void, Never>?
     @ObservationIgnored private let fixedWall: Date?
+    @ObservationIgnored private var turnStarted: [String: Double] = [:]
+    @ObservationIgnored private var firstToken: [String: Double] = [:]
 
     public init(device: any Device, config: Config, storeDirectory: URL) {
         self.chatRun = ChatRun(config: config)
@@ -25,11 +27,11 @@ public final class Engine {
         self.fixedWall = nil
     }
 
-    public init(device: any Device, config: Config, storeDirectory: URL, chats: ChatLog, logURL: URL? = nil, fixedWall: Date? = nil) {
+    public init(device: any Device, config: Config, storeDirectory: URL, chats: ChatLog, storeRevision: Int = 0, logURL: URL? = nil, fixedWall: Date? = nil) {
         self.chatRun = ChatRun(config: config)
         self.store = Store(directory: storeDirectory)
         self.noticeLog = logURL.map(NoticeLog.init)
-        self.session = Session(chats: chats, chatModel: config.chatModel)
+        self.session = Session(chats: chats, chatModel: config.chatModel, revision: storeRevision)
         self.fixedWall = fixedWall
         self.scene = PanelScene(session: session)
     }
@@ -47,7 +49,7 @@ public final class Engine {
 
     private func apply(_ reaction: Reaction, at now: Now, run: String?) -> Disposition {
         scene = PanelScene(session: session)
-        for raw in reaction.notices { publish(Notice(run: run ?? raw.run, type: raw.type, fields: raw.fields)) }
+        for raw in reaction.notices { publish(enrich(raw, run: run, now: now)) }
         for effect in reaction.effects { dispatch(effect, run: run) }
         scheduleTick(from: now)
         return reaction.disposition
@@ -63,7 +65,7 @@ public final class Engine {
             }
         case let .reloadKeys(id):
             runs[id] = run
-            tasks[id] = Task { [chatRun, weak self] in await chatRun.reload(); await self?.receive(.keysReloaded(id)) }
+            tasks[id] = Task { [chatRun, weak self] in await chatRun.reload(); self?.receive(.keysReloaded(id)) }
         case let .cancel(id):
             tasks[id]?.cancel()
         case let .persist(id, state):
@@ -90,7 +92,7 @@ public final class Engine {
         let delay = max(0, deadline - now.monotonicMS)
         tickTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(delay)); guard !Task.isCancelled else { return }
-            await self?.tick()
+            self?.tick()
         }
     }
 
@@ -104,6 +106,18 @@ public final class Engine {
         if let noticeLog { Task { await noticeLog.append(notice) } }
     }
 
+    private func enrich(_ raw: Notice, run: String?, now: Now) -> Notice {
+        var fields = raw.fields
+        if raw.type == "turn", case let .string(id) = fields["turn"] { turnStarted[id] = now.monotonicMS }
+        if raw.type == "token", case let .string(id) = fields["turn"], firstToken[id] == nil { firstToken[id] = now.monotonicMS }
+        if raw.type == "done", case let .string(id) = fields["turn"], let start = turnStarted[id] {
+            fields["ttft_ms"] = .int(Int(max(0, (firstToken[id] ?? now.monotonicMS) - start)))
+            fields["total_ms"] = .int(Int(max(0, now.monotonicMS - start)))
+            turnStarted[id] = nil; firstToken[id] = nil
+        }
+        return Notice(run: run ?? raw.run, type: raw.type, fields: fields)
+    }
+
     private func trace(_ kind: String, effectID: EffectID, detail: String, run: String?) {
         onTrace?(Notice(run: run, type: "trace", fields: ["kind": .string(kind), "effect": .string(effectID.rawValue), "detail": .string(detail)]))
     }
@@ -113,7 +127,16 @@ public final class Engine {
 
 private extension Effect {
     var id: EffectID { switch self { case let .chat(id, _), let .reloadKeys(id), let .cancel(id), let .persist(id, _): id } }
-    var description: String { switch self { case let .chat(_, request): "chat \(request.version) model=\(request.model) messages=\(request.messages.count)"; case .reloadKeys: "reloadKeys"; case .cancel: "cancel"; case let .persist(_, state): "persist revision=\(state.revision)" } }
+    var description: String {
+        switch self {
+        case let .chat(_, request):
+            let body = (try? JSONEncoder.stable.encode(request)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            return "chat \(request.version) body=\(body)"
+        case .reloadKeys: return "reloadKeys"
+        case .cancel: return "cancel"
+        case let .persist(_, state): return "persist revision=\(state.revision)"
+        }
+    }
 }
 
 private extension Completion {
