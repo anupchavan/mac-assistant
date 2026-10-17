@@ -3,9 +3,9 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key><string>dev.anup.assistant</string>
-    <key>CFBundleName</key><string>Assistant</string>
-    <key>CFBundleDisplayName</key><string>Assistant</string>
-    <key>CFBundleExecutable</key><string>Assistant</string>
+    <key>CFBundleName</key><string>Quicky</string>
+    <key>CFBundleDisplayName</key><string>Quicky</string>
+    <key>CFBundleExecutable</key><string>Quicky</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>CFBundleVersion</key><string>1</string>
