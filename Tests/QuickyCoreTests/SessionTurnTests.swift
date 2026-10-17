@@ -17,6 +17,19 @@ final class SessionTurnTests: XCTestCase {
         XCTAssertEqual(other.phase, .hidden)
     }
 
+    func testTypedGestureWhileTypingClosesPanel() {
+        var session = Session()
+        _ = session.handle(.input(.key(.fnDown(shift: true))), at: start)
+        XCTAssertEqual(session.phase, .typing(prefill: ""))
+
+        _ = session.handle(.input(.key(.fnUp)), at: Now(monotonicMS: 10, wall: start.wall))
+        _ = session.handle(.input(.key(.fnDown(shift: false))), at: Now(monotonicMS: 20, wall: start.wall))
+        let closed = session.handle(.input(.key(.keyDown(code: 49))), at: Now(monotonicMS: 30, wall: start.wall))
+
+        XCTAssertEqual(closed.disposition, .handled)
+        XCTAssertEqual(session.phase, .hidden)
+    }
+
     func testSubmitStartsTypedTurn() {
         var session = Session()
         let reaction = session.handle(.input(.submit("hello")), at: start)

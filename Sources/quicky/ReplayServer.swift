@@ -1,9 +1,10 @@
+import CryptoKit
 import Foundation
 import Network
 import QuickyCore
 
 struct ReplayChunk: Codable, Sendable { var atMS: Int; var data: String; enum CodingKeys: String, CodingKey { case atMS = "at_ms", data } }
-struct ReplayRequest: Codable, Sendable { var method: String; var path: String; var bodyJSON: JSONValue; var volatileFields: [String]?; enum CodingKeys: String, CodingKey { case method, path, bodyJSON = "body_json", volatileFields = "volatile_fields" } }
+struct ReplayRequest: Codable, Sendable { var method: String; var path: String; var bodyJSON: JSONValue; var contentSHA256: String?; enum CodingKeys: String, CodingKey { case method, path, bodyJSON = "body_json", contentSHA256 = "content_sha256" } }
 struct ReplayResponse: Codable, Sendable { var status: Int; var headers: [String: String]; var sseChunks: [ReplayChunk]; enum CodingKeys: String, CodingKey { case status, headers, sseChunks = "sse_chunks" } }
 struct ReplayExpectation: Codable, Sendable { var request: ReplayRequest; var response: ReplayResponse }
 
@@ -21,18 +22,11 @@ actor ReplayServer {
     private(set) var failure: String?
     private let cancelAfterMS: Int?
     private let relay: CancelRelay
-    private let inputValidated: Bool
 
-    init(directory: URL, ask: String?, cancelAfterMS: Int?, relay: CancelRelay) throws {
+    init(directory: URL, cancelAfterMS: Int?, relay: CancelRelay) throws {
         let data = try Data(contentsOf: directory.appendingPathComponent("expect.jsonl"))
         if let array = try? JSONDecoder().decode([ReplayExpectation].self, from: data) { expectations = array }
         else { expectations = try String(decoding: data, as: UTF8.self).split(whereSeparator: \.isNewline).map { try JSONDecoder().decode(ReplayExpectation.self, from: Data($0.utf8)) } }
-        if let ask {
-            for expectation in expectations {
-                guard Self.ask(in: expectation.request.bodyJSON) == ask else { throw ReplayFailure.message("request body mismatch") }
-            }
-            inputValidated = true
-        } else { inputValidated = false }
         self.cancelAfterMS = cancelAfterMS; self.relay = relay
     }
 
@@ -65,16 +59,18 @@ actor ReplayServer {
             guard next < expectations.count else { throw ReplayFailure.message("unexpected request") }
             let expected = expectations[next]; let actual = try parseRequest(requestData)
             guard actual.method == expected.request.method, actual.path == expected.request.path else { throw ReplayFailure.message("request mismatch: expected \(expected.request.method) \(expected.request.path), got \(actual.method) \(actual.path)") }
-            if actual.body == nil, actual.fingerprint == nil, inputValidated {
-                next += 1; try await sendResponse(expected.response, on: connection); connection.cancel(); return
-            }
-            let fields = expected.request.volatileFields ?? []
-            let normalizedExpected = removing(fields, from: expected.request.bodyJSON)
-            if let actualBody = actual.body {
-                guard removing(fields, from: actualBody) == normalizedExpected else { throw ReplayFailure.message("request body mismatch") }
+            if let expectedHash = expected.request.contentSHA256 {
+                guard let systemContent = systemContent(in: actual.body) else {
+                    throw ReplayFailure.message("request system content is missing")
+                }
+                guard sha256(systemContent) == expectedHash else {
+                    throw ReplayFailure.message("request system content hash mismatch")
+                }
+                guard removingSystemContent(from: actual.body) == removingSystemContent(from: expected.request.bodyJSON) else {
+                    throw ReplayFailure.message("request body mismatch")
+                }
             } else {
-                let expectedFingerprint = fingerprintForTransport(expected.request.bodyJSON)
-                guard actual.fingerprint == expectedFingerprint else { throw ReplayFailure.message("request body fingerprint mismatch \(actual.fingerprint ?? "missing") != \(expectedFingerprint ?? "missing")") }
+                guard actual.body == expected.request.bodyJSON else { throw ReplayFailure.message("request body mismatch") }
             }
             next += 1
             try await sendResponse(expected.response, on: connection)
@@ -86,31 +82,46 @@ actor ReplayServer {
     }
 
     private func receiveRequest(_ connection: NWConnection) async throws -> Data {
-        var all = Data(); var wanted: Int?; var chunked = false
-        while true {
-            let part = try await receive(on: connection); guard !part.isEmpty else { break }; all.append(part)
-            if wanted == nil, !chunked, let marker = all.range(of: Data("\r\n\r\n".utf8)) {
-                let header = String(decoding: all[..<marker.lowerBound], as: UTF8.self)
-                if let length = header.split(separator: "\n").first(where: { $0.lowercased().hasPrefix("content-length:") }).flatMap({ Int($0.split(separator: ":", maxSplits: 1)[1].trimmingCharacters(in: .whitespacesAndNewlines)) }) {
-                    wanted = marker.upperBound + length
-                } else if header.lowercased().contains("transfer-encoding: chunked") {
-                    chunked = true
-                } else { wanted = marker.upperBound }
-            }
-            if let wanted, all.count >= wanted { break }
-            if chunked, all.range(of: Data("\r\n0\r\n\r\n".utf8)) != nil { break }
+        let separator = Data("\r\n\r\n".utf8)
+        var data = Data()
+        var headerEnd: Data.Index?
+        while headerEnd == nil {
+            let part = try await receive(on: connection)
+            guard !part.isEmpty else { throw ReplayFailure.message("connection ended before request headers") }
+            data.append(part)
+            headerEnd = data.range(of: separator)?.upperBound
         }
-        return all
+
+        let end = headerEnd!
+        let header = String(decoding: data[..<(end - separator.count)], as: UTF8.self)
+        guard let contentLength = contentLength(in: header) else {
+            throw ReplayFailure.message("request is missing Content-Length")
+        }
+        let requestLength = end + contentLength
+        while data.count < requestLength {
+            let part = try await receive(on: connection)
+            guard !part.isEmpty else { throw ReplayFailure.message("connection ended before request body") }
+            data.append(part)
+        }
+        return Data(data.prefix(requestLength))
     }
 
-    private func parseRequest(_ data: Data) throws -> (method: String, path: String, body: JSONValue?, fingerprint: String?) {
+    private func parseRequest(_ data: Data) throws -> (method: String, path: String, body: JSONValue) {
         guard let marker = data.range(of: Data("\r\n\r\n".utf8)) else { throw ReplayFailure.message("malformed HTTP request") }
         let header = String(decoding: data[..<marker.lowerBound], as: UTF8.self); let first = header.split(separator: "\n").first?.split(separator: " ") ?? []
         guard first.count >= 2 else { throw ReplayFailure.message("malformed request line") }
         let body = data[marker.upperBound...]
-        let fingerprint = header.split(separator: "\n").first(where: { $0.lowercased().hasPrefix("x-quicky-body-fingerprint:") })?.split(separator: ":", maxSplits: 1).last?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let open = body.firstIndex(of: UInt8(ascii: "{")), let close = body.lastIndex(of: UInt8(ascii: "}")), open <= close else { return (String(first[0]), String(first[1]), nil, fingerprint) }
-        return (String(first[0]), String(first[1]), try JSONDecoder().decode(JSONValue.self, from: Data(body[open...close])), fingerprint)
+        guard !body.isEmpty else { throw ReplayFailure.message("request body is missing") }
+        let decoded = try JSONDecoder().decode(JSONValue.self, from: Data(body))
+        return (String(first[0]), String(first[1]), decoded)
+    }
+
+    private func contentLength(in header: String) -> Int? {
+        let prefix = "content-length:"
+        for line in header.components(separatedBy: "\r\n") where line.lowercased().hasPrefix(prefix) {
+            return Int(line.dropFirst(prefix.count).trimmingCharacters(in: .whitespaces))
+        }
+        return nil
     }
 
     private func sendResponse(_ response: ReplayResponse, on connection: NWConnection) async throws {
@@ -134,51 +145,29 @@ actor ReplayServer {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in connection.send(content: data, completion: .contentProcessed { error in if let error { continuation.resume(throwing: error) } else { continuation.resume(returning: ()) } }) }
     }
 
-    private static func ask(in value: JSONValue) -> String? {
-        guard case let .object(root) = value, case let .array(messages)? = root["messages"], case let .object(user)? = messages.last, case let .string(content)? = user["content"] else { return nil }
-        return content.components(separatedBy: "\n\nASK: ").last
+    private func systemContent(in value: JSONValue) -> String? {
+        guard case let .object(root) = value,
+              case let .array(messages)? = root["messages"],
+              let first = messages.first,
+              case let .object(system) = first,
+              case let .string(content)? = system["content"] else { return nil }
+        return content
     }
 
-    private func removing(_ paths: [String], from value: JSONValue) -> JSONValue {
-        guard case var .object(root) = value else { return value }
-        for path in paths {
-            let parts = path.split(separator: ".").map(String.init)
-            root = remove(parts, object: root)
-        }
+    private func removingSystemContent(from value: JSONValue) -> JSONValue {
+        guard case var .object(root) = value,
+              case var .array(messages)? = root["messages"],
+              !messages.isEmpty,
+              case var .object(system) = messages[0] else { return value }
+        system["content"] = nil
+        messages[0] = .object(system)
+        root["messages"] = .array(messages)
         return .object(root)
     }
 
-    private func fingerprint(_ value: JSONValue) -> String? {
-        guard let data = try? JSONEncoder.sorted.encode(value) else { return nil }
-        var hash: UInt64 = 14_695_981_039_346_656_037
-        for byte in data { hash = (hash ^ UInt64(byte)) &* 1_099_511_628_211 }
-        return String(hash, radix: 16)
+    private func sha256(_ value: String) -> String {
+        SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
-
-    private func fingerprintForTransport(_ value: JSONValue) -> String? {
-        guard case var .object(root) = value, case var .array(messages)? = root["messages"], !messages.isEmpty, case var .object(system) = messages[0] else { return fingerprint(value) }
-        system["content"] = .string(""); messages[0] = .object(system); root["messages"] = .array(messages)
-        return fingerprint(.object(root))
-    }
-
-    private func remove(_ path: [String], object: [String: JSONValue]) -> [String: JSONValue] {
-        guard let first = path.first else { return object }
-        var result = object
-        if path.count == 1 { result[first] = nil; return result }
-        guard var child = result[first] else { return result }
-        let rest = Array(path.dropFirst())
-        if case let .object(value) = child { child = .object(remove(rest, object: value)) }
-        else if case var .array(values) = child, let index = Int(rest[0]), values.indices.contains(index) {
-            if rest.count == 1, case var .object(item) = values[index] { item[first] = nil; values[index] = .object(item) }
-            else if case let .object(item) = values[index] { values[index] = .object(remove(Array(rest.dropFirst()), object: item)) }
-            child = .array(values)
-        }
-        result[first] = child; return result
-    }
-}
-
-private extension JSONEncoder {
-    static var sorted: JSONEncoder { let value = JSONEncoder(); value.outputFormatting = [.sortedKeys]; return value }
 }
 
 enum ReplayFailure: LocalizedError { case message(String); var errorDescription: String? { if case let .message(value) = self { value } else { nil } } }

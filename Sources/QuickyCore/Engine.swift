@@ -19,19 +19,12 @@ public final class Engine {
     @ObservationIgnored private var turnStarted: [String: Double] = [:]
     @ObservationIgnored private var firstToken: [String: Double] = [:]
 
-    public init(device: any Device, config: Config, storeDirectory: URL) {
-        self.chatRun = ChatRun(config: config)
-        self.store = Store(directory: storeDirectory)
-        self.noticeLog = nil
-        self.session = Session(chatModel: config.chatModel, deviceName: "mac")
-        self.fixedWall = nil
-    }
-
-    public init(device: any Device, config: Config, storeDirectory: URL, chats: ChatLog, storeRevision: Int = 0, logURL: URL? = nil, fixedWall: Date? = nil, deviceName: String = "fixture") {
+    public init(device: any Device, config: Config, storeDirectory: URL, logURL: URL? = nil, fixedWall: Date? = nil, deviceName: String = "mac") {
+        let stored = Store.loadSynchronously(from: storeDirectory)
         self.chatRun = ChatRun(config: config)
         self.store = Store(directory: storeDirectory)
         self.noticeLog = logURL.map(NoticeLog.init)
-        self.session = Session(chats: chats, chatModel: config.chatModel, revision: storeRevision, deviceName: deviceName)
+        self.session = Session(chats: stored?.chats ?? ChatLog(), chatModel: config.chatModel, revision: stored?.revision ?? 0, deviceName: deviceName)
         self.fixedWall = fixedWall
         self.scene = PanelScene(session: session)
     }

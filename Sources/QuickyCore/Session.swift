@@ -37,7 +37,6 @@ public struct Session: Sendable, Equatable {
     public private(set) var phase: Phase = .hidden
     public private(set) var chats: ChatLog
     private var gesture = FnGesture()
-    private var nextTurn = 1
     private var nextEffect = 1
     private var revision = 0
     private var pendingQuietRevision: Int?
@@ -88,7 +87,8 @@ public struct Session: Sendable, Equatable {
             if output == .typed {
                 switch phase {
                 case .hidden, .resting: phase = .typing(prefill: ""); reaction.disposition = .handled
-                default: break
+                case .typing: phase = .hidden; reaction.disposition = .handled
+                case .turn: break
                 }
             }
         }
@@ -103,7 +103,7 @@ public struct Session: Sendable, Equatable {
             _ = chats.apply(.continueOrNew, at: now.wall)
             let route = Router.route(text)
             let request = Plan.typed(route: route, model: chatModel).request(ask: text, history: chats.history())
-            let turnID = TurnID("t\(nextTurn)"); nextTurn += 1
+            let turnID = chats.allocateTurnID()
             let effectID = freshEffect()
             var turn = Turn(id: turnID, ask: Ask(text, route: route), request: request)
             let reduced = turn.reduce(.start(effectID, request))

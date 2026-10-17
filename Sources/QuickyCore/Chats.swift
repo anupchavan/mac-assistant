@@ -27,13 +27,19 @@ public struct ChatLog: Sendable, Equatable, Codable {
     public private(set) var chats: [Chat]
     public private(set) var selected: Int
     private var nextID: Int
+    private var nextTurnID: Int
 
-    public init(chats: [Chat] = [], selected: Int = 0, nextID: Int = 1) {
-        self.chats = chats; self.selected = min(max(0, selected), max(0, chats.count - 1)); self.nextID = nextID
+    public init(chats: [Chat] = [], selected: Int = 0, nextID: Int = 1, nextTurnID: Int = 1) {
+        self.chats = chats; self.selected = min(max(0, selected), max(0, chats.count - 1)); self.nextID = nextID; self.nextTurnID = nextTurnID
     }
 
     public var current: Chat? { chats.indices.contains(selected) ? chats[selected] : nil }
     public var position: String? { chats.isEmpty ? nil : "\(selected + 1) of \(chats.count)" }
+
+    public mutating func allocateTurnID() -> TurnID {
+        defer { nextTurnID += 1 }
+        return TurnID("t\(nextTurnID)")
+    }
 
     @discardableResult
     public mutating func apply(_ action: ChatAction, at now: Date) -> Chat? {
@@ -72,6 +78,34 @@ public struct ChatLog: Sendable, Equatable, Codable {
             let removed = chats.count - 50; chats.removeFirst(removed); selected = max(0, selected - removed)
         }
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case chats, selected, nextID, nextTurnID
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        chats = try container.decode([Chat].self, forKey: .chats)
+        selected = try container.decode(Int.self, forKey: .selected)
+        nextID = try container.decode(Int.self, forKey: .nextID)
+        nextTurnID = try container.decodeIfPresent(Int.self, forKey: .nextTurnID) ?? Self.nextTurnID(after: chats)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(chats, forKey: .chats)
+        try container.encode(selected, forKey: .selected)
+        try container.encode(nextID, forKey: .nextID)
+        try container.encode(nextTurnID, forKey: .nextTurnID)
+    }
+
+    private static func nextTurnID(after chats: [Chat]) -> Int {
+        let highest = chats.flatMap(\.turns).compactMap { record -> Int? in
+            guard record.id.first == "t" else { return nil }
+            return Int(record.id.dropFirst())
+        }.max() ?? 0
+        return highest + 1
+    }
 }
 
 public struct StoredState: Sendable, Equatable, Codable {
@@ -85,9 +119,14 @@ public actor Store {
     private var newestRevision = -1
     public init(directory: URL) { self.directory = directory }
 
-    public func load() -> StoredState? {
+    public nonisolated static func loadSynchronously(from directory: URL) -> StoredState? {
         let url = directory.appendingPathComponent("state.json")
-        guard let data = try? Data(contentsOf: url), let state = try? JSONDecoder.stable.decode(StoredState.self, from: data) else { return nil }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder.stable.decode(StoredState.self, from: data)
+    }
+
+    public func load() -> StoredState? {
+        guard let state = Self.loadSynchronously(from: directory) else { return nil }
         newestRevision = max(newestRevision, state.revision); return state
     }
 
