@@ -1,22 +1,25 @@
-// swift-tools-version:5.10
+// swift-tools-version: 6.0
 import PackageDescription
 
+let strict: [SwiftSetting] = [.enableExperimentalFeature("StrictConcurrency")]
+
 let package = Package(
-    name: "Assistant",
+    name: "Quicky",
     platforms: [.macOS(.v14)],
     targets: [
+        .target(name: "QuickyCore", swiftSettings: strict),
+        .executableTarget(name: "quicky", dependencies: ["QuickyCore"], swiftSettings: strict),
         .executableTarget(
-            name: "Assistant",
-            path: "Sources/Assistant",
+            name: "QuickyApp",
+            dependencies: ["QuickyCore"],
+            swiftSettings: strict,
             linkerSettings: [
                 .linkedFramework("AppKit"),
-                .linkedFramework("ScreenCaptureKit"),
-                .linkedFramework("Vision"),
-                .linkedFramework("EventKit"),
-                .linkedFramework("AVFoundation"),
                 .linkedFramework("ApplicationServices"),
             ]
         ),
-        .testTarget(name: "AssistantTests", dependencies: ["Assistant"], path: "Tests/AssistantTests"),
-    ]
+        .testTarget(name: "QuickyCoreTests", dependencies: ["QuickyCore"], swiftSettings: strict),
+        .testTarget(name: "QuickyAppTests", dependencies: ["QuickyApp"], swiftSettings: strict),
+    ],
+    swiftLanguageModes: [.v6]
 )

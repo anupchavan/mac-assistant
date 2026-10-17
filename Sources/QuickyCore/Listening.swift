@@ -10,8 +10,8 @@ import Foundation
 ///   three taps within 600 ms    → cancel
 ///   single tap                  → tap (the model decides: follow-up, stop speaking, or nothing)
 ///   other key while fn is down  → discard (fn+arrows, fn+Delete, fn+F-keys never fire)
-struct FnGesture {
-    enum Output: Equatable {
+struct FnGesture: Sendable, Equatable {
+    enum Output: Sendable, Equatable {
         case preroll, holdBegan, holdEnded(heldMs: Double), handsFree, handsFreeStop, typed, tap, cancel, discard
     }
 
