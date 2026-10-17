@@ -42,8 +42,9 @@ public struct Session: Sendable, Equatable {
     private var revision = 0
     private var pendingQuietRevision: Int?
     private var announcedSession = false
+    private var chatModel: String
 
-    public init(chats: ChatLog = ChatLog()) { self.chats = chats }
+    public init(chats: ChatLog = ChatLog(), chatModel: String = "sarvam-105b") { self.chats = chats; self.chatModel = chatModel }
     public var nextDeadline: Double? { gesture.deadline }
 
     public mutating func handle(_ event: Event, at now: Now) -> Reaction {
@@ -98,7 +99,7 @@ public struct Session: Sendable, Equatable {
         case .hidden, .typing, .resting:
             _ = chats.apply(.continueOrNew, at: now.wall)
             let route = Router.route(text)
-            let request = Plan.typed(route: route).request(ask: text, history: chats.history())
+            let request = Plan.typed(route: route, model: chatModel).request(ask: text, history: chats.history())
             let turnID = TurnID("t\(nextTurn)"); nextTurn += 1
             let effectID = freshEffect()
             var turn = Turn(id: turnID, ask: Ask(text, route: route), request: request)

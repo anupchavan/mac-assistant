@@ -15,25 +15,29 @@ public final class Engine {
     @ObservationIgnored private var tasks: [EffectID: Task<Void, Never>] = [:]
     @ObservationIgnored private var runs: [EffectID: String?] = [:]
     @ObservationIgnored private var tickTask: Task<Void, Never>?
+    @ObservationIgnored private let fixedWall: Date?
 
     public init(device: any Device, config: Config, storeDirectory: URL) {
         self.chatRun = ChatRun(config: config)
         self.store = Store(directory: storeDirectory)
         self.noticeLog = nil
-        self.session = Session()
+        self.session = Session(chatModel: config.chatModel)
+        self.fixedWall = nil
     }
 
-    public init(device: any Device, config: Config, storeDirectory: URL, chats: ChatLog, logURL: URL? = nil) {
+    public init(device: any Device, config: Config, storeDirectory: URL, chats: ChatLog, logURL: URL? = nil, fixedWall: Date? = nil) {
         self.chatRun = ChatRun(config: config)
         self.store = Store(directory: storeDirectory)
         self.noticeLog = logURL.map(NoticeLog.init)
-        self.session = Session(chats: chats)
+        self.session = Session(chats: chats, chatModel: config.chatModel)
+        self.fixedWall = fixedWall
         self.scene = PanelScene(session: session)
     }
 
     @discardableResult
     public func send(_ input: Input, run: String? = nil) -> Disposition {
-        apply(session.handle(.input(input), at: .real), at: .real, run: run)
+        let now = currentNow
+        return apply(session.handle(.input(input), at: now), at: now, run: run)
     }
 
     @discardableResult
@@ -77,7 +81,8 @@ public final class Engine {
         let run = runs[id] ?? nil
         trace("completion", effectID: id, detail: completion.description, run: run)
         if completion.isTerminal { tasks[id] = nil; runs[id] = nil }
-        apply(session.handle(.completion(completion), at: .real), at: .real, run: run)
+        let now = currentNow
+        _ = apply(session.handle(.completion(completion), at: now), at: now, run: run)
     }
 
     private func scheduleTick(from now: Now) {
@@ -90,8 +95,8 @@ public final class Engine {
     }
 
     private func tick() {
-        let now = Now.real
-        apply(session.handle(.tick, at: now), at: now, run: nil)
+        let now = currentNow
+        _ = apply(session.handle(.tick, at: now), at: now, run: nil)
     }
 
     private func publish(_ notice: Notice) {
@@ -102,6 +107,8 @@ public final class Engine {
     private func trace(_ kind: String, effectID: EffectID, detail: String, run: String?) {
         onTrace?(Notice(run: run, type: "trace", fields: ["kind": .string(kind), "effect": .string(effectID.rawValue), "detail": .string(detail)]))
     }
+
+    private var currentNow: Now { Now(monotonicMS: ProcessInfo.processInfo.systemUptime * 1000, wall: fixedWall ?? Date()) }
 }
 
 private extension Effect {

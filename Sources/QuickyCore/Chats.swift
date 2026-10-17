@@ -87,7 +87,7 @@ public actor Store {
 
     public func load() -> StoredState? {
         let url = directory.appendingPathComponent("state.json")
-        guard let data = try? Data(contentsOf: url), let state = try? JSONDecoder().decode(StoredState.self, from: data) else { return nil }
+        guard let data = try? Data(contentsOf: url), let state = try? JSONDecoder.stable.decode(StoredState.self, from: data) else { return nil }
         newestRevision = max(newestRevision, state.revision); return state
     }
 
