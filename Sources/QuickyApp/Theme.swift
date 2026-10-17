@@ -2,7 +2,6 @@ import AppKit
 import CoreText
 import SwiftUI
 
-/// Raycast's bundled Midnight theme and its role mapping (ui-spec v4). No other colour literals.
 enum Theme {
     static let foreground = Color(hex: 0xFAF0FF)
     static let accent = Color(hex: 0x4FA3F8)
@@ -29,7 +28,6 @@ enum Theme {
     static let rowRadius: CGFloat = 12
     static let inputHeight: CGFloat = 56
     static let footerHeight: CGFloat = 44
-    /// Lead column is x 16 to 40; every text column starts at 16 + 24 + 12 = 52.
     static let inset: CGFloat = 16
     static let leadWidth: CGFloat = 24
     static let leadGap: CGFloat = 12
@@ -47,7 +45,6 @@ extension Color {
     }
 }
 
-/// Geist type ramp: sizes 11/13/16 only, tracking -1%.
 struct TypeStyle: Sendable {
     let postScriptName: String
     let size: CGFloat
@@ -79,7 +76,6 @@ extension View {
 }
 
 enum Fonts {
-    /// The app passes its bundle's `Resources/Fonts`; tests pass the repo's `Resources/Fonts`.
     static func register(from directory: URL) {
         let urls = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
         for url in urls where url.pathExtension == "ttf" {

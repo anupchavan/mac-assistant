@@ -2,13 +2,8 @@ import AppKit
 import CoreGraphics
 import QuickyCore
 
-/// The `CGEventTap`. It keeps one raw bit (`fnHeld`) so ordinary typing never crosses into the core;
-/// what a press means is the core's call, and its `Disposition` decides whether the key is swallowed.
 @MainActor
 final class Hotkey {
-    /// Every event Quicky posts carries this in its source's userData. Posted events reach the tap
-    /// later, after any synthetic depth is back to 0, so the tag is the only reliable mark.
-    static let syntheticTag: Int64 = 0x5155_4943_4B59
 
     private static let escapeKeyCode: Int64 = 53
     private static let fnKeyCode: Int64 = 63
@@ -19,7 +14,6 @@ final class Hotkey {
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var fnHeld = false
-    /// A swallowed keyDown's keyUp is swallowed too, so the front app never sees half a keystroke.
     private var swallowedKeyUps: Set<Int64> = []
 
     init(engine: Engine, panel: PanelWindow) {
@@ -36,7 +30,7 @@ final class Hotkey {
         let callback: CGEventTapCallBack = { _, type, event, userInfo in
             guard let userInfo else { return Unmanaged.passUnretained(event) }
             let swallow = MainActor.assumeIsolated {
-                Unmanaged<Hotkey>.fromOpaque(userInfo).takeUnretainedValue().handle(type, event)
+                Unmanaged<Hotkey>.fromOpaque(userInfo).takeUnretainedValue().shouldSwallow(type, event)
             }
             return swallow ? nil : Unmanaged.passUnretained(event)
         }
@@ -73,13 +67,11 @@ final class Hotkey {
         panel.hasTap = false
     }
 
-    /// Returns true to swallow the event.
-    private func handle(_ type: CGEventType, _ event: CGEvent) -> Bool {
+    private func shouldSwallow(_ type: CGEventType, _ event: CGEvent) -> Bool {
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return false
         }
-        if event.getIntegerValueField(.eventSourceUserData) == Self.syntheticTag { return false }
         let code = event.getIntegerValueField(.keyboardEventKeycode)
         switch type {
         case .keyDown where code == Self.escapeKeyCode:

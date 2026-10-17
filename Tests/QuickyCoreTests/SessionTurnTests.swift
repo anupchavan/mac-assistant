@@ -6,14 +6,14 @@ final class SessionTurnTests: XCTestCase {
 
     func testTypedGestureOpensTypingAndOtherGestureOutputIsSilent() {
         var session = Session()
-        XCTAssertEqual(session.handle(.input(.key(.fnDown(shift: false))), at: start).disposition, .silent)
+        XCTAssertEqual(session.handle(.input(.key(.fnDown(shift: false))), at: start).disposition, .passQuietly)
         let typed = session.handle(.input(.key(.keyDown(code: 49))), at: Now(monotonicMS: 50, wall: start.wall))
         XCTAssertEqual(typed.disposition, .handled)
         XCTAssertEqual(session.phase, .typing(prefill: ""))
         var other = Session()
         _ = other.handle(.input(.key(.fnDown(shift: false))), at: start)
         let hold = other.handle(.tick, at: Now(monotonicMS: 200, wall: start.wall))
-        XCTAssertEqual(hold.disposition, .silent)
+        XCTAssertEqual(hold.disposition, .passQuietly)
         XCTAssertEqual(other.phase, .hidden)
     }
 

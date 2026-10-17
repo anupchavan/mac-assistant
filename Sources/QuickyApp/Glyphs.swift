@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Stroke icons on Hugeicons' 24-unit grid, drawn at any size with a constant 1.5 pt stroke.
 enum Glyph {
     case question, loading, tick, alert
 
@@ -8,7 +7,6 @@ enum Glyph {
         var p = Path()
         switch self {
         case .question:
-            // help-circle's "?" without its circle, scaled up to fill the grid
             p.move(to: CGPoint(x: 8.5, y: 8.5))
             p.addCurve(to: CGPoint(x: 12, y: 5), control1: CGPoint(x: 8.5, y: 6.57), control2: CGPoint(x: 10.07, y: 5))
             p.addCurve(to: CGPoint(x: 15.5, y: 8.5), control1: CGPoint(x: 13.93, y: 5), control2: CGPoint(x: 15.5, y: 6.57))
@@ -59,7 +57,6 @@ struct GlyphView: View {
     }
 }
 
-/// loading-03 turning once per 800 ms; static under Reduce Motion.
 struct Spinner: View {
     let size: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion

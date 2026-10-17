@@ -1,5 +1,3 @@
-// Posts real key events into the session event tap, so a verifier can press the keys a
-// computer-use tool cannot (fn), and types through the same path a keyboard does.
 // Usage: keys fn+space | fn-hold <ms> | fn-tap | esc | return | type <text>
 import CoreGraphics
 import Foundation

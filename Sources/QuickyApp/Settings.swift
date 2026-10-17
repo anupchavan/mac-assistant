@@ -1,6 +1,7 @@
 import AppKit
 import Security
 import SwiftUI
+import QuickyCore
 
 @MainActor
 final class SettingsWindow {
@@ -55,11 +56,9 @@ private struct SettingsView: View {
     }
 }
 
-/// The Keychain item the core reads (`Keys.swift`): service and account must stay exactly these.
-/// The stored value is never read back into the UI.
 enum SarvamKey {
     private static var item: [CFString: Any] {
-        [kSecClass: kSecClassGenericPassword, kSecAttrService: "dev.anup.assistant", kSecAttrAccount: "SARVAM_API_KEY"]
+        [kSecClass: kSecClassGenericPassword, kSecAttrService: Keys.service, kSecAttrAccount: Keys.account]
     }
 
     static func save(_ key: String) -> OSStatus {

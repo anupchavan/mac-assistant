@@ -2,25 +2,20 @@ import AppKit
 import QuickyCore
 import SwiftUI
 
-/// Where the panel goes for one summon. The growth direction and height cap are fixed when it opens,
-/// so streaming text never makes the panel jump to the other side of the pointer.
 struct PanelPlacement: Equatable {
     var x: CGFloat
-    /// The top edge when hanging down, the bottom edge when growing up.
-    var anchorY: CGFloat
+    var fixedEdgeY: CGFloat
     var growsUp: Bool
     var maxHeight: CGFloat
 
     func frame(width: CGFloat, height: CGFloat) -> CGRect {
         let h = min(height, maxHeight)
-        return CGRect(x: x, y: growsUp ? anchorY : anchorY - h, width: width, height: h)
+        return CGRect(x: x, y: growsUp ? fixedEdgeY : fixedEdgeY - h, width: width, height: h)
     }
 }
 
-/// Pure placement in AppKit coordinates (origin bottom-left), on the visible frame of the pointer's screen.
 enum PanelPlacer {
     static let margin: CGFloat = 24
-    /// Below this much room under the pointer, the panel grows upward instead, if there is more room there.
     static let minUsefulHeight: CGFloat = 240
 
     static func cap(for visible: CGRect) -> CGFloat { min(visible.height * 0.6, 560) }
@@ -36,23 +31,22 @@ enum PanelPlacer {
         let roomDown = top - (visible.minY + margin)
         let roomUp = (visible.maxY - margin) - bottom
         if roomDown >= min(cap, minUsefulHeight) || roomDown >= roomUp {
-            return PanelPlacement(x: x, anchorY: top, growsUp: false, maxHeight: max(0, min(cap, roomDown)))
+            return PanelPlacement(x: x, fixedEdgeY: top, growsUp: false, maxHeight: max(0, min(cap, roomDown)))
         }
-        return PanelPlacement(x: x, anchorY: bottom, growsUp: true, maxHeight: max(0, min(cap, roomUp)))
+        return PanelPlacement(x: x, fixedEdgeY: bottom, growsUp: true, maxHeight: max(0, min(cap, roomUp)))
     }
 }
 
-/// The non-activating panel at the cursor. It follows `engine.scene` and never decides behaviour.
 final class PanelWindow: NSPanel {
     private let engine: Engine
-    private let hosting: NSHostingView<PanelRoot>
+    private let hosting: NSHostingView<TopPinnedPanel>
     var openSettings: @MainActor () -> Void = {}
-    /// Set by `Hotkey`. A listen-only tap still sees Esc, so the panel handles Esc only with no tap at all.
+    /// A listen-only tap still sees Esc, so the panel handles Esc only with no tap at all.
     var hasTap = false
 
     private var shown = false
     private var sizedSinceShow = false
-    private var placement = PanelPlacement(x: 0, anchorY: 0, growsUp: false, maxHeight: 560)
+    private var placement = PanelPlacement(x: 0, fixedEdgeY: 0, growsUp: false, maxHeight: 560)
     private var userScrolled = false
     private var mouseMonitor: Any?
     private var activationObserver: NSObjectProtocol?
@@ -60,7 +54,7 @@ final class PanelWindow: NSPanel {
 
     init(engine: Engine) {
         self.engine = engine
-        hosting = NSHostingView(rootView: PanelRoot(panel: PanelView(scene: .hidden)))
+        hosting = NSHostingView(rootView: TopPinnedPanel(panel: PanelView(scene: .hidden)))
         hosting.sizingOptions = []
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: Theme.panelWidth, height: Theme.inputHeight),
@@ -83,7 +77,6 @@ final class PanelWindow: NSPanel {
         installEscapeFallback()
     }
 
-    // Key without activation: the user's app stays frontmost while the panel takes typing.
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
 
@@ -113,13 +106,12 @@ final class PanelWindow: NSPanel {
         if case .typing = scene.input { makeKey() }
     }
 
-    /// The Esc path: close an open overlay first (slice 1 has none), else the core decides.
     func escape() -> Bool {
         engine.send(.escape) == .handled
     }
 
     private func render(_ scene: PanelScene) {
-        hosting.rootView = PanelRoot(panel: PanelView(
+        hosting.rootView = TopPinnedPanel(panel: PanelView(
             scene: scene,
             maxHeight: placement.maxHeight,
             send: { [weak self] in _ = self?.engine.send($0) },
@@ -204,8 +196,6 @@ final class PanelWindow: NSPanel {
         }
     }
 
-    /// Glass behind the SwiftUI tint. Nothing may paint outside the rounded shape, or square corners
-    /// show behind the glass.
     private static func glass(containing content: NSView) -> NSView {
         if #available(macOS 26, *) {
             let glass = NSGlassEffectView()
@@ -237,9 +227,7 @@ final class PanelWindow: NSPanel {
     }
 }
 
-/// Keeps the panel content at the top of the window, so a window shorter than the content loses the
-/// thread's bottom edge for a frame, never the input row.
-struct PanelRoot: View {
+struct TopPinnedPanel: View {
     let panel: PanelView
     var body: some View {
         panel.frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)

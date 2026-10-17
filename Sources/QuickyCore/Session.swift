@@ -109,7 +109,7 @@ public struct Session: Sendable, Equatable {
   }
 
   private mutating func handleGesture(_ outputs: [FnGesture.Output], at now: Now) -> Reaction {
-    var reaction = Reaction(disposition: .silent)
+    var reaction = Reaction(disposition: .passQuietly)
     for output in outputs {
       if output == .typed {
         switch phase {
@@ -195,11 +195,11 @@ public struct Session: Sendable, Equatable {
 
   private mutating func handleCompletion(_ completion: Completion, at now: Now) -> Reaction {
     if case .persisted(_, let revision) = completion {
-      guard pendingQuietRevision == revision else { return Reaction(disposition: .silent) }
+      guard pendingQuietRevision == revision else { return Reaction(disposition: .passQuietly) }
       pendingQuietRevision = nil
-      return Reaction(notices: [notice("quiet")], disposition: .silent)
+      return Reaction(notices: [notice("quiet")], disposition: .passQuietly)
     }
-    guard case .turn(var turn) = phase else { return Reaction(disposition: .silent) }
+    guard case .turn(var turn) = phase else { return Reaction(disposition: .passQuietly) }
     let reduced: TurnReduction
     switch completion {
     case .token(let id, let text): reduced = turn.reduce(.token(id, text))
@@ -207,8 +207,8 @@ public struct Session: Sendable, Equatable {
     case .failed(let id, let error): reduced = turn.reduce(.failed(id, error))
     case .unauthorized(let id): reduced = turn.reduce(.unauthorized(id, reload: freshEffect()))
     case .keysReloaded(let id): reduced = turn.reduce(.keysReloaded(id, chat: freshEffect()))
-    case .cancelled: return Reaction(disposition: .silent)
-    case .persisted: return Reaction(disposition: .silent)
+    case .cancelled: return Reaction(disposition: .passQuietly)
+    case .persisted: return Reaction(disposition: .passQuietly)
     }
     phase = .turn(turn)
     if let outcome = reduced.outcome {
@@ -227,7 +227,7 @@ public struct Session: Sendable, Equatable {
             "state": .string("done"),
           ]))
     }
-    return Reaction(effects: effects(reduced.intents), notices: notices, disposition: .silent)
+    return Reaction(effects: effects(reduced.intents), notices: notices, disposition: .passQuietly)
   }
 
   private mutating func commit(turn: Turn, outcome: Outcome, intents: [TurnIntent], at now: Now)

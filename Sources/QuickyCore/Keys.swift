@@ -2,8 +2,8 @@ import Foundation
 import Security
 
 public enum Keys {
-    private static let service = "dev.anup.assistant"
-    private static let account = "SARVAM_API_KEY"
+    public static let service = "dev.anup.assistant"
+    public static let account = "SARVAM_API_KEY"
 
     public static func reload() -> String? {
         keychainValue() ?? ProcessInfo.processInfo.environment[account] ?? shellValue(account)

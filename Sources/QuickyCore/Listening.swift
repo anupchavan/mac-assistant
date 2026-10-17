@@ -1,15 +1,5 @@
 import Foundation
 
-/// Wispr Flow-style fn gestures as a pure state machine (no AppKit). Times are milliseconds on a
-/// monotonic clock. The monitor feeds events and calls `tick` at `deadline`.
-///
-///   hold fn ≥ 200 ms            → holdBegan … holdEnded on release
-///   tap, tap (≤ 400 ms apart)   → handsFree
-///   tap while hands-free        → handsFreeStop
-///   fn + Space, shift + fn      → typed (shift held at fn-down never starts the mic)
-///   three taps within 600 ms    → cancel
-///   single tap                  → tap (the model decides: follow-up, stop speaking, or nothing)
-///   other key while fn is down  → discard (fn+arrows, fn+Delete, fn+F-keys never fire)
 struct FnGesture: Sendable, Equatable {
     enum Output: Sendable, Equatable {
         case preroll, holdBegan, holdEnded(heldMs: Double), handsFree, handsFreeStop, typed, tap, cancel, discard
@@ -22,13 +12,13 @@ struct FnGesture: Sendable, Equatable {
 
     private enum State: Equatable {
         case idle
-        case down(at: Double)                 // first press, not yet a hold
+        case down(at: Double)
         case holding(since: Double)
         case waitSecond(firstDown: Double, up: Double)
-        case secondDown(firstDown: Double)    // will become hands-free
+        case secondDown(firstDown: Double)
         case handsFree(firstDown: Double)
         case handsFreeDown(firstDown: Double, at: Double)
-        case typedHeld                        // fn is down but already became .typed; its release does nothing
+        case typedHeld
     }
 
     private var state: State = .idle
@@ -38,7 +28,6 @@ struct FnGesture: Sendable, Equatable {
         switch state { case .handsFree, .handsFreeDown: return true; default: return false }
     }
 
-    /// Reset from outside, e.g. when the model ends hands-free listening by silence.
     mutating func reset() { state = .idle; deadline = nil }
 
     mutating func fnDown(_ t: Double, shift: Bool = false) -> [Output] {
@@ -64,7 +53,6 @@ struct FnGesture: Sendable, Equatable {
         }
     }
 
-    /// Shift pressed while fn is down, before it became a hold: typed instead of voice.
     mutating func shiftDown(_ t: Double) -> [Output] {
         guard case .down = state else { return [] }
         state = .typedHeld; deadline = nil

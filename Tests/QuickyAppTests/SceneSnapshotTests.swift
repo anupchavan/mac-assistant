@@ -4,7 +4,6 @@ import XCTest
 @testable import QuickyApp
 @testable import QuickyCore
 
-/// Renders `PanelView` for hand-built scenes into build/scenes/*.png, with no Engine involved.
 @MainActor
 final class SceneSnapshotTests: XCTestCase {
     private static let repo = URL(fileURLWithPath: #filePath)
@@ -79,7 +78,6 @@ final class SceneSnapshotTests: XCTestCase {
     }
 }
 
-/// A dark wallpaper stand-in for the glass to sit on, since an offscreen render has no desktop behind it.
 private struct Backdrop: View {
     let scene: PanelScene
     var body: some View {

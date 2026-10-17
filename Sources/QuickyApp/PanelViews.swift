@@ -2,7 +2,6 @@ import AppKit
 import QuickyCore
 import SwiftUI
 
-/// The panel's content, rendered only from a `PanelScene` value. It drives turns only through `send`.
 struct PanelView: View {
     let scene: PanelScene
     var maxHeight: CGFloat = 560
@@ -48,7 +47,6 @@ struct PanelView: View {
     }
 }
 
-/// The tint layers over the window's glass: window/base at 55%, then window/bg to window/bg-secondary.
 private struct PanelFill: View {
     var body: some View {
         ZStack {
@@ -156,8 +154,6 @@ private struct ThreadView: View {
     }
 }
 
-/// Stops following the newest text the moment the user scrolls, and resumes once they are back at the
-/// bottom. Scroll phases need macOS 15; on 14 the thread always follows.
 private struct FollowTracker: ViewModifier {
     @Binding var following: Bool
 
@@ -240,7 +236,6 @@ private struct StepRowView: View {
     }
 }
 
-/// A 32 pt row inset 8 from the panel: lead centred at x 28, content from x 52.
 private struct Row<Lead: View, Content: View>: View {
     let lead: Lead
     @ViewBuilder let content: Content
@@ -269,17 +264,8 @@ struct AnswerText: View {
             .textSelection(.enabled)
     }
 
-    /// Streaming text often ends mid-syntax ("**bol"). The open marker is closed so the words render
-    /// styled at once instead of flashing literal asterisks until the closing token arrives.
     static func attributed(_ markdown: String, streaming: Bool) -> AttributedString {
-        var source = markdown
-        if streaming {
-            for marker in ["`", "**"] where source.components(separatedBy: marker).count % 2 == 0 {
-                source = source.hasSuffix(marker)
-                    ? String(source.dropLast(marker.count))
-                    : String(source.reversed().drop(while: \.isWhitespace).reversed()) + marker
-            }
-        }
+        let source = streaming ? closingUnfinishedMarkers(markdown) : markdown
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible
@@ -293,6 +279,16 @@ struct AnswerText: View {
         }
         for (range, font) in styled { text[range].font = font }
         return text
+    }
+
+    static func closingUnfinishedMarkers(_ markdown: String) -> String {
+        var source = markdown
+        for marker in ["`", "**"] where source.components(separatedBy: marker).count % 2 == 0 {
+            source = source.hasSuffix(marker)
+                ? String(source.dropLast(marker.count))
+                : String(source.reversed().drop(while: \.isWhitespace).reversed()) + marker
+        }
+        return source
     }
 }
 
@@ -360,7 +356,6 @@ private struct FooterActionView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        // While typing, ↵ belongs to the text field.
         .keyboardShortcut(shortcutActive ? shortcut : nil)
     }
 }

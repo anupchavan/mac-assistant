@@ -1,6 +1,5 @@
 import Foundation
 
-/// Everything the shell (or the CLI) can tell the core. Slices add cases; nothing is removed.
 public enum Input: Sendable, Equatable {
     case key(Key)
     case escape
@@ -9,7 +8,6 @@ public enum Input: Sendable, Equatable {
     case dismiss(Dismissal)
 }
 
-/// Raw key facts from the event tap. Esc never arrives here; it is `Input.escape`.
 public enum Key: Sendable, Equatable {
     case fnDown(shift: Bool)
     case fnUp
@@ -26,12 +24,10 @@ public enum Dismissal: Sendable, Equatable {
     case otherAppActivated(bundleID: String)
 }
 
-/// `.handled` swallows a key, `.notHandled` passes it on, `.silent` passes it on and logs nothing.
 public enum Disposition: Sendable, Equatable {
-    case handled, notHandled, silent
+    case handled, notHandled, passQuietly
 }
 
-/// What the core needs from the Mac. Slice 1 needs nothing; each later slice adds its requirements.
 public protocol Device: Sendable {}
 
 public struct Config: Sendable, Equatable {

@@ -1,5 +1,4 @@
 #!/bin/bash
-# Builds Quicky.app (release), signs it, and optionally relaunches it.
 #   ./make-app.sh               build/Quicky.app
 #   ./make-app.sh run           ... and (re)launch, logs to build/quicky.log
 #   ./make-app.sh verify        build/verify/Quicky.app, compiled with QUICKY_VERIFY
@@ -11,7 +10,6 @@ OUT=build
 FLAGS=()
 if [[ "${1:-}" == "verify" ]]; then
   OUT=build/verify
-  # Its own scratch path, so switching between release and verify doesn't rebuild everything.
   FLAGS=(--scratch-path .build/verify -Xswiftc -DQUICKY_VERIFY)
   shift
 fi
@@ -34,8 +32,6 @@ IDENTITY="${ASSISTANT_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 
 codesign --force --deep --sign "${IDENTITY:--}" "$APP"
 echo "signed $APP with: ${IDENTITY:-ad-hoc}"
 
-# Verify builds also get QuickyKeys.app, which posts real fn/Esc events (computer-use tools have
-# no fn key). It is its own signed bundle so its one-time Accessibility grant survives rebuilds:
 #   open -n -W -g build/verify/QuickyKeys.app --args fn+space
 if [[ "$OUT" == build/verify ]]; then
   KEYS="$OUT/QuickyKeys.app"

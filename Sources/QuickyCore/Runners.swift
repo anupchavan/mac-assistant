@@ -20,7 +20,6 @@ public actor ChatRun {
     public func reload() { config.sarvamKey = Keys.reload() }
 }
 
-/// Appends each notice as one JSON line, off the main actor and in order.
 public final class NoticeLog: Sendable {
     private let lines: AsyncStream<String>.Continuation
 

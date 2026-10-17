@@ -80,7 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    /// The same raw keys fn+Space produces, so the core treats it exactly like the gesture.
     @objc private func ask() {
         engine.send(.key(.fnDown(shift: false)))
         engine.send(.key(.keyDown(code: 49)))
