@@ -1,0 +1,64 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "content_sha256": "4d4c0b04ac3b66221b8b35af4edfe1525d378fa5460a9dd6e05595cd840de28a",
+      "body_json": {
+        "model": "sarvam-105b",
+        "messages": [
+          {"role": "system"},
+          {"role": "user", "content": "OUTPUT_MODE: typed\n\nASK: Explain photosynthesis in detail, in at least ten sentences."}
+        ],
+        "stream": true,
+        "max_tokens": 1600,
+        "reasoning_effort": null
+      }
+    },
+    "response": {
+      "status": 200,
+      "headers": {"Content-Type": "text/event-stream"},
+      "sse_chunks": [
+        {"at_ms": 100, "data": "{\"choices\":[{\"delta\":{\"content\":\"Photos\"}}]}"},
+        {"at_ms": 100, "data": "{\"choices\":[{\"delta\":{\"content\":\"ynthesis\"}}]}"},
+        {"at_ms": 100, "data": "{\"choices\":[{\"delta\":{\"content\":\" is\"}}]}"},
+        {"at_ms": 100, "data": "{\"choices\":[{\"delta\":{\"content\":\" the\"}}]}"},
+        {"at_ms": 100, "data": "{\"choices\":[{\"delta\":{\"content\":\" process\"}}]}"},
+        {"at_ms": 107, "data": "{\"choices\":[{\"delta\":{\"content\":\" by\"}}]}"},
+        {"at_ms": 114, "data": "{\"choices\":[{\"delta\":{\"content\":\" which\"}}]}"},
+        {"at_ms": 119, "data": "{\"choices\":[{\"delta\":{\"content\":\" plants\"}}]}"},
+        {"at_ms": 126, "data": "{\"choices\":[{\"delta\":{\"content\":\",\"}}]}"},
+        {"at_ms": 132, "data": "{\"choices\":[{\"delta\":{\"content\":\" algae\"}}]}"},
+        {"at_ms": 138, "data": "{\"choices\":[{\"delta\":{\"content\":\",\"}}]}"},
+        {"at_ms": 144, "data": "{\"choices\":[{\"delta\":{\"content\":\" and\"}}]}"},
+        {"at_ms": 151, "data": "{\"choices\":[{\"delta\":{\"content\":\" some\"}}]}"},
+        {"at_ms": 156, "data": "{\"choices\":[{\"delta\":{\"content\":\" bacteria\"}}]}"},
+        {"at_ms": 163, "data": "{\"choices\":[{\"delta\":{\"content\":\" convert\"}}]}"},
+        {"at_ms": 167, "data": "{\"choices\":[{\"delta\":{\"content\":\" light\"}}]}"},
+        {"at_ms": 175, "data": "{\"choices\":[{\"delta\":{\"content\":\" energy\"}}]}"},
+        {"at_ms": 181, "data": "{\"choices\":[{\"delta\":{\"content\":\" into\"}}]}"},
+        {"at_ms": 187, "data": "{\"choices\":[{\"delta\":{\"content\":\" chemical\"}}]}"},
+        {"at_ms": 193, "data": "{\"choices\":[{\"delta\":{\"content\":\" energy\"}}]}"},
+        {"at_ms": 199, "data": "{\"choices\":[{\"delta\":{\"content\":\" stored\"}}]}"},
+        {"at_ms": 206, "data": "{\"choices\":[{\"delta\":{\"content\":\" in\"}}]}"},
+        {"at_ms": 212, "data": "{\"choices\":[{\"delta\":{\"content\":\" glucose\"}}]}"},
+        {"at_ms": 218, "data": "{\"choices\":[{\"delta\":{\"content\":\".\"}}]}"},
+        {"at_ms": 224, "data": "{\"choices\":[{\"delta\":{\"content\":\"\\n\\n\"}}]}"},
+        {"at_ms": 232, "data": "{\"choices\":[{\"delta\":{\"content\":\"It\"}}]}"},
+        {"at_ms": 236, "data": "{\"choices\":[{\"delta\":{\"content\":\" primarily\"}}]}"},
+        {"at_ms": 242, "data": "{\"choices\":[{\"delta\":{\"content\":\" occurs\"}}]}"},
+        {"at_ms": 248, "data": "{\"choices\":[{\"delta\":{\"content\":\" in\"}}]}"},
+        {"at_ms": 254, "data": "{\"choices\":[{\"delta\":{\"content\":\" the\"}}]}"},
+        {"at_ms": 261, "data": "{\"choices\":[{\"delta\":{\"content\":\" chloroplast\"}}]}"},
+        {"at_ms": 268, "data": "{\"choices\":[{\"delta\":{\"content\":\"s\"}}]}"},
+        {"at_ms": 274, "data": "{\"choices\":[{\"delta\":{\"content\":\" of\"}}]}"},
+        {"at_ms": 280, "data": "{\"choices\":[{\"delta\":{\"content\":\" plant\"}}]}"},
+        {"at_ms": 286, "data": "{\"choices\":[{\"delta\":{\"content\":\" cells\"}}]}"},
+        {"at_ms": 292, "data": "{\"choices\":[{\"delta\":{\"content\":\",\"}}]}"},
+        {"at_ms": 299, "data": "{\"choices\":[{\"delta\":{\"content\":\" specifically\"}}]}"},
+        {"at_ms": 305, "data": "{\"choices\":[{\"delta\":{\"content\":\" within\"}}]}"},
+        {"at_ms": 312, "data": "[DONE]"}
+      ]
+    }
+  }
+]

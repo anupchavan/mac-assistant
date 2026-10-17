@@ -1,0 +1,38 @@
+[
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "content_sha256": "4d4c0b04ac3b66221b8b35af4edfe1525d378fa5460a9dd6e05595cd840de28a",
+      "body_json": {
+        "model": "sarvam-105b",
+        "messages": [
+          {"role": "system"},
+          {"role": "user", "content": "OUTPUT_MODE: typed\n\nASK: hi"}
+        ],
+        "stream": true,
+        "max_tokens": 1600,
+        "reasoning_effort": null
+      }
+    },
+    "response": {"status": 401, "headers": {}, "sse_chunks": []}
+  },
+  {
+    "request": {
+      "method": "POST",
+      "path": "/v1/chat/completions",
+      "content_sha256": "4d4c0b04ac3b66221b8b35af4edfe1525d378fa5460a9dd6e05595cd840de28a",
+      "body_json": {
+        "model": "sarvam-105b",
+        "messages": [
+          {"role": "system"},
+          {"role": "user", "content": "OUTPUT_MODE: typed\n\nASK: hi"}
+        ],
+        "stream": true,
+        "max_tokens": 1600,
+        "reasoning_effort": null
+      }
+    },
+    "response": {"status": 401, "headers": {}, "sse_chunks": []}
+  }
+]
