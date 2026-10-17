@@ -266,7 +266,7 @@ Invariants:
 - **Confirms:** a confirm matches only in `.confirming(p)` with `p.id`, so a second ↵ is `ignored`.
 - **No persisted images:** `TurnRecord` has no image field.
 - **Context reuse:** a capture is reused only within the same summon interaction, and only if its `CaptureTarget` (pid plus window id) matches. A regular-app activation invalidates the slot.
-- **Heard history** (needs a slice-2 spike to confirm the protocol):
+- **Heard history** (protocol confirmed by the slice-2 spike, see Risks):
   - `TTSRun` sends each sentence as `text` plus `flush`, and counts the server's `final` events as segment boundaries in order.
   - `SpeechLedger` maps each segment to its span of the answer through `cleanForSpeech`'s span map.
   - On a stop, history keeps the segments whose `final` arrived and whose audio had fully played (cumulative scheduled seconds at that boundary ≤ played seconds), then appends "…(interrupted)".
@@ -404,8 +404,7 @@ Invariants:
 
 ## Risks
 
-- The Bulbul `final`-per-flush behaviour is unverified. A spike at the start of slice 2 decides between the ledger and its fallback.
-- Sending one sentence per flush may add TTS latency between sentences. The spike measures the gap. If it exceeds 150 ms, flush every two sentences and coarsen the ledger to match.
+- Settled by a spike on 2026-10-17 (bulbul:v3, hi-IN, three sentences, four runs): Bulbul sends one `final` per `flush`, in order, and every audio frame of a segment arrives before that segment's `final`. Per-sentence flushing costs nothing measurable: first audio arrived at about 300 ms either way (one 877 ms outlier), and all audio was in by 1.2 to 1.75 s for 5.5 s of speech. No RIFF headers were seen, but the strip stays. The ledger below is built as specified, and its fallback is not needed.
 - SwiftUI may re-render the whole thread per token. Batch scene publishes to about 30 Hz if profiling shows jank.
 - Private and incognito windows have no reliable detector across browsers. v2 does not claim to skip them.
 - The live CLI and the verify app share Sarvam and OpenAI credits. CI uses replay only.
