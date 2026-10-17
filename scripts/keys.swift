@@ -28,6 +28,12 @@ func key(_ code: CGKeyCode, flags: CGEventFlags = []) {
     }
 }
 
+guard CGPreflightPostEventAccess() else {
+    _ = CGRequestPostEventAccess()
+    FileHandle.standardError.write(Data("keys: not allowed to post events; grant Accessibility to this app\n".utf8))
+    exit(77)
+}
+
 let args = CommandLine.arguments.dropFirst()
 switch args.first {
 case "fn+space":

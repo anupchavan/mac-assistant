@@ -34,6 +34,29 @@ IDENTITY="${ASSISTANT_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 
 codesign --force --deep --sign "${IDENTITY:--}" "$APP"
 echo "signed $APP with: ${IDENTITY:-ad-hoc}"
 
+# Verify builds also get QuickyKeys.app, which posts real fn/Esc events (computer-use tools have
+# no fn key). It is its own signed bundle so its one-time Accessibility grant survives rebuilds:
+#   open -n -W -g build/verify/QuickyKeys.app --args fn+space
+if [[ "$OUT" == build/verify ]]; then
+  KEYS="$OUT/QuickyKeys.app"
+  rm -rf "$KEYS"
+  mkdir -p "$KEYS/Contents/MacOS"
+  swiftc -O scripts/keys.swift -o "$KEYS/Contents/MacOS/QuickyKeys"
+  cat > "$KEYS/Contents/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>CFBundleIdentifier</key><string>dev.anup.quicky-keys</string>
+  <key>CFBundleName</key><string>QuickyKeys</string>
+  <key>CFBundleExecutable</key><string>QuickyKeys</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>LSUIElement</key><true/>
+</dict></plist>
+PLIST
+  codesign --force --sign "${IDENTITY:--}" "$KEYS"
+  echo "signed $KEYS"
+fi
+
 if [[ "${1:-}" == "run" ]]; then
   pkill -x Quicky 2>/dev/null || true
   sleep 0.3
