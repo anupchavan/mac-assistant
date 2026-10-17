@@ -43,8 +43,11 @@ public struct Session: Sendable, Equatable {
     private var pendingQuietRevision: Int?
     private var announcedSession = false
     private var chatModel: String
+    private var deviceName: String
 
-    public init(chats: ChatLog = ChatLog(), chatModel: String = "sarvam-105b", revision: Int = 0) { self.chats = chats; self.chatModel = chatModel; self.revision = revision }
+    public init(chats: ChatLog = ChatLog(), chatModel: String = "sarvam-105b", revision: Int = 0, deviceName: String = "fixture") {
+        self.chats = chats; self.chatModel = chatModel; self.revision = revision; self.deviceName = deviceName
+    }
     public var nextDeadline: Double? { gesture.deadline }
 
     public mutating func handle(_ event: Event, at now: Now) -> Reaction {
@@ -106,7 +109,7 @@ public struct Session: Sendable, Equatable {
             let reduced = turn.reduce(.start(effectID, request))
             phase = .turn(turn)
             var notices: [Notice] = []
-            if !announcedSession { announcedSession = true; notices.append(notice("session", ["chat": .string(chats.current!.id), "device": .string("fixture")])) }
+            if !announcedSession { announcedSession = true; notices.append(notice("session", ["chat": .string(chats.current!.id), "device": .string(deviceName)])) }
             notices.append(notice("turn", ["turn": .string(turnID.rawValue), "ask": .string(text), "mode": .string("typed"), "route": .string(route.rawValue), "chat": .string(chats.current!.id)]))
             return Reaction(effects: effects(reduced.intents), notices: notices, disposition: .handled)
         case .turn: return ignored("submit", "turn is running")
@@ -182,5 +185,5 @@ public struct Session: Sendable, Equatable {
     private func effects(_ intents: [TurnIntent]) -> [Effect] { intents.map { switch $0 { case let .chat(id, req): .chat(id, req); case let .reloadKeys(id): .reloadKeys(id); case let .cancel(id): .cancel(id) } } }
     private func notice(_ type: String, _ fields: [String: NoticeValue] = [:]) -> Notice { Notice(run: nil, type: type, fields: fields) }
     private func ignored(_ input: String, _ detail: String) -> Reaction { Reaction(notices: [notice("ignored", ["input": .string(input), "detail": .string(detail)])], disposition: .notHandled) }
-    private func chatChanged() -> Reaction { Reaction(notices: [notice("session", ["chat": .string(chats.current?.id ?? ""), "device": .string("fixture")])], disposition: .handled) }
+    private func chatChanged() -> Reaction { Reaction(notices: [notice("session", ["chat": .string(chats.current?.id ?? ""), "device": .string(deviceName)])], disposition: .handled) }
 }

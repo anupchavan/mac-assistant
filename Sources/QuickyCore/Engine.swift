@@ -23,15 +23,15 @@ public final class Engine {
         self.chatRun = ChatRun(config: config)
         self.store = Store(directory: storeDirectory)
         self.noticeLog = nil
-        self.session = Session(chatModel: config.chatModel)
+        self.session = Session(chatModel: config.chatModel, deviceName: "mac")
         self.fixedWall = nil
     }
 
-    public init(device: any Device, config: Config, storeDirectory: URL, chats: ChatLog, storeRevision: Int = 0, logURL: URL? = nil, fixedWall: Date? = nil) {
+    public init(device: any Device, config: Config, storeDirectory: URL, chats: ChatLog, storeRevision: Int = 0, logURL: URL? = nil, fixedWall: Date? = nil, deviceName: String = "fixture") {
         self.chatRun = ChatRun(config: config)
         self.store = Store(directory: storeDirectory)
         self.noticeLog = logURL.map(NoticeLog.init)
-        self.session = Session(chats: chats, chatModel: config.chatModel, revision: storeRevision)
+        self.session = Session(chats: chats, chatModel: config.chatModel, revision: storeRevision, deviceName: deviceName)
         self.fixedWall = fixedWall
         self.scene = PanelScene(session: session)
     }
