@@ -38,5 +38,16 @@ public struct Config: Sendable, Equatable {
     public var sarvamKey: String?
     public var chatModel: String
     public var baseURL: URL
-    public static func load() -> Config { fatalError("not implemented") }
+    public var recordDirectory: URL?
+
+    public init(sarvamKey: String?, chatModel: String = "sarvam-105b", baseURL: URL = URL(string: "https://api.sarvam.ai")!, recordDirectory: URL? = nil) {
+        self.sarvamKey = sarvamKey
+        self.chatModel = chatModel
+        self.baseURL = baseURL
+        self.recordDirectory = recordDirectory
+    }
+
+    public static func load() -> Config {
+        Config(sarvamKey: Keys.reload(), chatModel: Keys.setting("ASSISTANT_DEEP_MODEL") ?? "sarvam-105b")
+    }
 }

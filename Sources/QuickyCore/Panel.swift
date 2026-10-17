@@ -50,6 +50,10 @@ public struct Notice: Sendable, Equatable {
     public let run: String?
     public let type: String
     public let fields: [String: NoticeValue]
+
+    public init(run: String?, type: String, fields: [String: NoticeValue] = [:]) {
+        self.run = run; self.type = type; self.fields = fields
+    }
 }
 
 public enum NoticeValue: Sendable, Equatable {
