@@ -1,11 +1,13 @@
 // Posts real key events into the session event tap, so a verifier can press the keys a
-// computer-use tool cannot (fn). Usage: swift scripts/keys.swift fn+space | fn-hold <ms> | fn-tap | esc
+// computer-use tool cannot (fn), and types through the same path a keyboard does.
+// Usage: keys fn+space | fn-hold <ms> | fn-tap | esc | return | type <text>
 import CoreGraphics
 import Foundation
 
 let fnKey: CGKeyCode = 63
 let space: CGKeyCode = 49
 let escape: CGKeyCode = 53
+let returnKey: CGKeyCode = 36
 let source = CGEventSource(stateID: .hidSystemState)
 
 func post(_ event: CGEvent?) {
@@ -50,7 +52,18 @@ case "fn-tap":
     fn(down: false)
 case "esc":
     key(escape)
+case "return":
+    key(returnKey)
+case "type":
+    for character in args.dropFirst().joined(separator: " ").utf16 {
+        for down in [true, false] {
+            let event = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: down)
+            var unit = character
+            event?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &unit)
+            post(event)
+        }
+    }
 default:
-    FileHandle.standardError.write(Data("usage: keys.swift fn+space | fn-hold <ms> | fn-tap | esc\n".utf8))
+    FileHandle.standardError.write(Data("usage: keys fn+space | fn-hold <ms> | fn-tap | esc | return | type <text>\n".utf8))
     exit(64)
 }
