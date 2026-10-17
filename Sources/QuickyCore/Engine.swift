@@ -8,6 +8,9 @@ public final class Engine {
   public private(set) var scene: PanelScene = .hidden
   @ObservationIgnored public var onNotice: (@MainActor (Notice) -> Void)?
   @ObservationIgnored public var onTrace: (@MainActor (Notice) -> Void)?
+#if QUICKY_VERIFY
+  @ObservationIgnored private var noticeObservers: [UUID: @MainActor (Notice) -> Void] = [:]
+#endif
   @ObservationIgnored private let chatRun: ChatRun
   @ObservationIgnored private let store: Store
   @ObservationIgnored private let noticeLog: NoticeLog?
@@ -112,7 +115,22 @@ public final class Engine {
   private func publish(_ notice: Notice) {
     onNotice?(notice)
     noticeLog?.append(notice)
+#if QUICKY_VERIFY
+    for observer in noticeObservers.values { observer(notice) }
+#endif
   }
+
+#if QUICKY_VERIFY
+  public func addNoticeObserver(_ observer: @MainActor @escaping (Notice) -> Void) -> UUID {
+    let id = UUID()
+    noticeObservers[id] = observer
+    return id
+  }
+
+  public func removeNoticeObserver(_ id: UUID) {
+    noticeObservers[id] = nil
+  }
+#endif
 
   private func enrich(_ raw: Notice, run: String?, now: Now) -> Notice {
     var fields = raw.fields

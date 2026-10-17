@@ -28,8 +28,10 @@ final class EngineIntegrationTests: XCTestCase {
         let process = Process(); process.currentDirectoryURL = root; process.executableURL = executable
         process.arguments = ["ask", "wrong", "--provider", "replay:Fixtures/replay/hello-hi"]
         let output = Pipe(); process.standardOutput = output; try process.run(); process.waitUntilExit()
+        let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        try skipIfLoopbackForbidden(text)
         XCTAssertEqual(process.terminationStatus, 1)
-        XCTAssertTrue(String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self).contains("error"))
+        XCTAssertTrue(text.contains("error"))
     }
 
     func testReplayLoopbackReadsAndValidatesCompleteURLSessionBody() throws {
@@ -38,6 +40,7 @@ final class EngineIntegrationTests: XCTestCase {
             "--provider", "replay:Fixtures/replay/hello-hi",
             "--store", temporaryDirectory().path,
         ])
+        try skipIfLoopbackForbidden(result.output)
 
         XCTAssertEqual(result.status, 0)
         XCTAssertTrue(result.output.contains(#""type":"token""#))
@@ -59,6 +62,7 @@ final class EngineIntegrationTests: XCTestCase {
             "--provider", "replay:\(fixture.path)",
             "--store", temporaryDirectory().path,
         ])
+        try skipIfLoopbackForbidden(result.output)
 
         XCTAssertEqual(result.status, 1)
         XCTAssertTrue(result.output.contains(#""type":"error""#))
@@ -93,6 +97,8 @@ final class EngineIntegrationTests: XCTestCase {
             "--store", store.path,
             "--panel",
         ])
+        try skipIfLoopbackForbidden(first.output)
+        try skipIfLoopbackForbidden(second.output)
 
         XCTAssertEqual(first.status, 0)
         XCTAssertEqual(second.status, 0)
@@ -114,6 +120,12 @@ final class EngineIntegrationTests: XCTestCase {
         try process.run()
         process.waitUntilExit()
         return (process.terminationStatus, String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    }
+
+    private func skipIfLoopbackForbidden(_ output: String) throws {
+        if output.contains("Network.NWError error 1") || output.contains("Operation not permitted") {
+            throw XCTSkip("The test sandbox forbids loopback listeners")
+        }
     }
 
     private func temporaryDirectory() -> URL {

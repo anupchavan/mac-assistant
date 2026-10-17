@@ -7,6 +7,48 @@ public struct InputEnvelope: Sendable, Equatable {
 }
 
 public enum JSONL {
+    static func verificationHelloIsValid(_ line: String, token: String) -> Bool {
+        guard let data = line.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        return object["type"] as? String == "hello" && object["token"] as? String == token
+    }
+
+    static func verificationNoticeMatches(_ notice: Notice, runs: Set<String>) -> Bool {
+        guard let run = notice.run else { return false }
+        return runs.contains(run)
+    }
+
+    public static func encode(_ envelope: InputEnvelope) throws -> String {
+        var pairs: [(String, NoticeValue)]
+        switch envelope.input {
+        case .submit(let text): pairs = [("type", .string("ask")), ("text", .string(text))]
+        case .escape: pairs = [("type", .string("escape"))]
+        case .dismiss(.clickOutside(let userScrolled)):
+            pairs = [("type", .string("dismiss")), ("user_scrolled", .bool(userScrolled))]
+        case .dismiss(.otherAppActivated): throw JSONLError.invalidInput
+        case .command(let command):
+            let value = switch command {
+            case .retry: "retry"
+            case .previousChat: "previous_chat"
+            case .nextChat: "next_chat"
+            case .newChat: "new_chat"
+            }
+            pairs = [("type", .string("command")), ("command", .string(value))]
+        case .key(let key):
+            switch key {
+            case .fnDown(let shift):
+                pairs = [("type", .string("key")), ("key", .string("fn_down")), ("shift", .bool(shift))]
+            case .fnUp: pairs = [("type", .string("key")), ("key", .string("fn_up"))]
+            case .shiftDown: pairs = [("type", .string("key")), ("key", .string("shift_down"))]
+            case .keyDown(let code):
+                pairs = [("type", .string("key")), ("key", .string("key_down")), ("code", .int(code))]
+            }
+        }
+        if let run = envelope.run { pairs.insert(("run", .string(run)), at: 1) }
+        return "{" + pairs.map { jsonString($0.0) + ":" + encodeValue($0.1) }.joined(separator: ",") + "}"
+    }
+
     public static func encode(_ notice: Notice) throws -> String {
         var pairs = [("type", NoticeValue.string(notice.type))]
         if let run = notice.run { pairs.append(("run", .string(run))) }

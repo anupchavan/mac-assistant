@@ -71,6 +71,25 @@ final class CoreDataTests: XCTestCase {
         XCTAssertEqual(line, #"{"type":"token","run":"r","a":"x","z":1}"#)
     }
 
+    func testVerificationProtocolRejectsBadTokenAndFiltersThroughOwnedQuiet() throws {
+        XCTAssertFalse(JSONL.verificationHelloIsValid(#"{"type":"hello","token":"wrong"}"#, token: "right"))
+        XCTAssertTrue(JSONL.verificationHelloIsValid(#"{"type":"hello","token":"right"}"#, token: "right"))
+
+        let input = try JSONL.decode(#"{"type":"ask","run":"owned","text":"hello"}"#)
+        XCTAssertEqual(input, InputEnvelope(.submit("hello"), run: "owned"))
+        XCTAssertEqual(try JSONL.encode(input), #"{"type":"ask","run":"owned","text":"hello"}"#)
+        let notices = [
+            Notice(run: nil, type: "quiet"),
+            Notice(run: "other", type: "quiet"),
+            Notice(run: "owned", type: "turn"),
+            Notice(run: "owned", type: "done", fields: ["outcome": .string("answered")]),
+            Notice(run: "owned", type: "quiet"),
+        ]
+        let routed = notices.filter { JSONL.verificationNoticeMatches($0, runs: ["owned"]) }
+        XCTAssertEqual(routed.map(\.type), ["turn", "done", "quiet"])
+        XCTAssertEqual(routed.last?.type, "quiet")
+    }
+
     func testPanelProjection() {
         var session = Session(); _ = session.handle(.input(.submit("hello")), at: .init(monotonicMS: 0, wall: Date()))
         let scene = PanelScene(session: session)
