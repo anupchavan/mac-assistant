@@ -31,6 +31,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkey = Hotkey(engine: engine, panel: panel)
         super.init()
         panel.openSettings = { [settings] in settings.show() }
+#if QUICKY_VERIFY
+        Task { _ = try? await JSONL.serve(engine: engine) }
+#endif
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {

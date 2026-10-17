@@ -67,12 +67,19 @@ struct UsageError: Error {}
 
 @MainActor
 func runCLI() async -> Int32 {
+  let arguments = Array(CommandLine.arguments.dropFirst())
+  if arguments.first == "--app" {
+    do {
+      let options = try AppOptions.parse(arguments)
+      return await AppSocketClient.run(options)
+    } catch {
+      writeUsage()
+      return 64
+    }
+  }
   let options: Options
-  do { options = try Options.parse(Array(CommandLine.arguments.dropFirst())) } catch {
-    FileHandle.standardError.write(
-      Data(
-        "usage: quicky ask TEXT [--provider live|replay:DIR] [--record DIR] [--cancel-after-ms N] [--key K] [--store DIR] [--now ISO] [--panel] [--trace] [--run ID]\n"
-          .utf8))
+  do { options = try Options.parse(arguments) } catch {
+    writeUsage()
     return 64
   }
   let storeURL =
@@ -144,6 +151,14 @@ func runCLI() async -> Int32 {
     return 1
   }
   return Int32(code)
+}
+
+func writeUsage() {
+  FileHandle.standardError.write(
+    Data(
+      ("usage: quicky ask TEXT [--provider live|replay:DIR] [--record DIR] [--cancel-after-ms N] [--key K] [--store DIR] [--now ISO] [--panel] [--trace] [--run ID]\n"
+        + "       quicky --app --run ID [--timeout-ms N] ask TEXT\n"
+        + "       quicky --app --run ID [--timeout-ms N] send\n").utf8))
 }
 
 func write(_ notice: Notice) {
