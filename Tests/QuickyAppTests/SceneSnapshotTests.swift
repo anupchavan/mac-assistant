@@ -26,18 +26,18 @@ final class SceneSnapshotTests: XCTestCase {
         )
         let scenes: [(String, PanelScene)] = [
             ("typing", scene(input: .typing(prefill: ""))),
-            ("asked", scene(input: .asked(ask), thread: [ThreadItem(
+            ("asked", scene(input: .working, thread: [ThreadItem(
                 id: "t2", ask: ask,
                 steps: [StepRow(text: "Read your question", state: .done), StepRow(text: "Thinking", state: .active)],
                 answer: "", error: nil, isLive: true
             )])),
-            ("streaming", scene(input: .asked(ask), thread: [earlier, ThreadItem(
+            ("streaming", scene(input: .working, thread: [earlier, ThreadItem(
                 id: "t2", ask: ask,
                 steps: [StepRow(text: "Read your question", state: .done), StepRow(text: "Thinking", state: .done)],
                 answer: "Say **नमस्ते** (*namaste*). It works with anyone.\n\nWith friends, `नमस्कार` or just **हाय",
                 error: nil, isLive: true
             )], chatPosition: "2 / 3")),
-            ("error", scene(input: .asked(ask), thread: [ThreadItem(
+            ("error", scene(input: .idle, thread: [ThreadItem(
                 id: "t2", ask: ask,
                 steps: [StepRow(text: "Thinking", state: .done)],
                 answer: "Say **नमस्ते** (*namaste*). It works",

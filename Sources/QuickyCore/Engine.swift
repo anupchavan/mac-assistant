@@ -111,7 +111,7 @@ public final class Engine {
 
   private func publish(_ notice: Notice) {
     onNotice?(notice)
-    if let noticeLog { Task { await noticeLog.append(notice) } }
+    noticeLog?.append(notice)
   }
 
   private func enrich(_ raw: Notice, run: String?, now: Now) -> Notice {

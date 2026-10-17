@@ -20,14 +20,24 @@ public actor ChatRun {
     public func reload() { config.sarvamKey = Keys.reload() }
 }
 
-public actor NoticeLog {
-    private let url: URL
-    public init(url: URL) { self.url = url }
+/// Appends each notice as one JSON line, off the main actor and in order.
+public final class NoticeLog: Sendable {
+    private let lines: AsyncStream<String>.Continuation
+
+    public init(url: URL) {
+        let (stream, lines) = AsyncStream<String>.makeStream()
+        self.lines = lines
+        Task.detached(priority: .utility) {
+            let files = FileManager.default
+            try? files.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if !files.fileExists(atPath: url.path) { files.createFile(atPath: url.path, contents: nil) }
+            guard let handle = try? FileHandle(forWritingTo: url) else { return }
+            _ = try? handle.seekToEnd()
+            for await line in stream { try? handle.write(contentsOf: Data((line + "\n").utf8)) }
+        }
+    }
+
     public func append(_ notice: Notice) {
-        guard let line = try? JSONL.encode(notice) else { return }
-        let data = Data((line + "\n").utf8)
-        if !FileManager.default.fileExists(atPath: url.path) { FileManager.default.createFile(atPath: url.path, contents: data); return }
-        guard let handle = try? FileHandle(forWritingTo: url) else { return }
-        do { try handle.seekToEnd(); try handle.write(contentsOf: data); try handle.close() } catch { try? handle.close() }
+        if let line = try? JSONL.encode(notice) { lines.yield(line) }
     }
 }

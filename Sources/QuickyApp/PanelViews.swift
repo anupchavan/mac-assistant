@@ -22,7 +22,7 @@ struct PanelView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            InputRowView(input: scene.input, isWorking: scene.thread.last?.isLive == true, send: send)
+            InputRowView(input: scene.input, send: send)
                 .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { inputHeight = $0 }
             if !scene.thread.isEmpty {
                 ThreadView(
@@ -60,7 +60,6 @@ private struct PanelFill: View {
 
 private struct InputRowView: View {
     let input: InputRow
-    let isWorking: Bool
     let send: @MainActor (Input) -> Void
 
     @State private var draft = ""
@@ -84,7 +83,7 @@ private struct InputRowView: View {
     }
 
     @ViewBuilder private var lead: some View {
-        if case .asked = input, isWorking {
+        if input == .working {
             Spinner(size: 22)
         } else {
             GlyphView(glyph: .question, size: 22, color: Theme.textTertiary)
@@ -108,8 +107,8 @@ private struct InputRowView: View {
             .foregroundStyle(Theme.textPrimary)
             .focused($focused)
             .onSubmit { send(.submit(draft)) }
-        case let .asked(ask):
-            Text(ask).type(.input).foregroundStyle(Theme.textSecondary).lineLimit(1).truncationMode(.tail)
+        case .working:
+            Color.clear.frame(height: 1)
         }
     }
 

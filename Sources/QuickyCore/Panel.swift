@@ -24,7 +24,7 @@ public struct PanelScene: Sendable, Equatable {
         case .hidden: input = .idle
         case let .typing(prefill): input = .typing(prefill: prefill)
         case let .turn(turn):
-            input = .asked(turn.ask.text)
+            input = .working
             items.removeAll { $0.id == turn.id.rawValue }
             items.append(ThreadItem(id: turn.id.rawValue, ask: turn.ask.text, steps: turn.steps.map { StepRow(text: $0.text, state: .done) }, answer: turn.answer, error: nil, isLive: true))
         case .resting:
@@ -43,7 +43,7 @@ public enum Presence: Sendable, Equatable {
 public enum InputRow: Sendable, Equatable {
     case idle
     case typing(prefill: String)
-    case asked(String)
+    case working
 }
 
 public struct ThreadItem: Sendable, Equatable, Identifiable {

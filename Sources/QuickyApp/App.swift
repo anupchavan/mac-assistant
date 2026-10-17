@@ -18,8 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let panel: PanelWindow
     private let hotkey: Hotkey
     private let settings = SettingsWindow()
-    private let noticeLog = NoticeLog(url: FileManager.default.homeDirectoryForCurrentUser
-        .appending(path: "Library/Logs/Quicky/quicky.log"))
     private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private var grants = Grants.current()
 
@@ -27,11 +25,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let fonts = Bundle.main.resourceURL?.appending(path: "Fonts") { Fonts.register(from: fonts) }
         let store = FileManager.default.homeDirectoryForCurrentUser
             .appending(path: "Library/Application Support/dev.anup.assistant")
-        engine = Engine(device: MacDevice(), config: Config.load(), storeDirectory: store)
+        let log = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Quicky/quicky.log")
+        engine = Engine(device: MacDevice(), config: Config.load(), storeDirectory: store, logURL: log)
         panel = PanelWindow(engine: engine)
         hotkey = Hotkey(engine: engine, panel: panel)
         super.init()
-        engine.onNotice = { [noticeLog] in noticeLog.append($0) }
         panel.openSettings = { [settings] in settings.show() }
     }
 
@@ -132,47 +130,5 @@ private struct Grants: Equatable {
     func requestMissing() {
         if !accessibility { AXIsProcessTrustedWithOptions(["AXTrustedCheckOptionPrompt": true] as CFDictionary) }
         if !inputMonitoring { CGRequestListenEventAccess() }
-    }
-}
-
-/// Appends each notice as one JSON line. Writes happen off the main actor, in order.
-// The core will own the line codec (`JSONL.swift`); delete `encode` when it lands.
-final class NoticeLog: Sendable {
-    private let lines: AsyncStream<String>.Continuation
-
-    init(url: URL) {
-        let (stream, lines) = AsyncStream<String>.makeStream()
-        self.lines = lines
-        Task.detached(priority: .utility) {
-            let files = FileManager.default
-            try? files.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if !files.fileExists(atPath: url.path) { files.createFile(atPath: url.path, contents: nil) }
-            guard let handle = try? FileHandle(forWritingTo: url) else { return }
-            _ = try? handle.seekToEnd()
-            for await line in stream { try? handle.write(contentsOf: Data((line + "\n").utf8)) }
-        }
-    }
-
-    func append(_ notice: Notice) { lines.yield(Self.encode(notice)) }
-
-    static func encode(_ notice: Notice) -> String {
-        var parts = ["\"type\":\(json(notice.type))"]
-        if let run = notice.run { parts.append("\"run\":\(json(run))") }
-        for (key, value) in notice.fields.sorted(by: { $0.key < $1.key }) {
-            let encoded = switch value {
-            case let .string(s): json(s)
-            case let .int(i): String(i)
-            case let .bool(b): b ? "true" : "false"
-            case .null: "null"
-            }
-            parts.append("\(json(key)):\(encoded)")
-        }
-        return "{\(parts.joined(separator: ","))}"
-    }
-
-    private static func json(_ string: String) -> String {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .withoutEscapingSlashes
-        return (try? encoder.encode(string)).flatMap { String(data: $0, encoding: .utf8) } ?? "\"\""
     }
 }
