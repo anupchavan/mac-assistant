@@ -23,9 +23,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     override init() {
         if let fonts = Bundle.main.resourceURL?.appending(path: "Fonts") { Fonts.register(from: fonts) }
-        let store = FileManager.default.homeDirectoryForCurrentUser
-            .appending(path: "Library/Application Support/dev.anup.assistant")
-        let log = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Logs/Quicky/quicky.log")
+        let home = FileManager.default.homeDirectoryForCurrentUser
+#if QUICKY_VERIFY
+        let store = home.appending(path: "Library/Application Support/dev.anup.assistant/verify")
+        let log = home.appending(path: "Library/Logs/Quicky/verify.log")
+#else
+        let store = home.appending(path: "Library/Application Support/dev.anup.assistant")
+        let log = home.appending(path: "Library/Logs/Quicky/quicky.log")
+#endif
         engine = Engine(device: MacDevice(), config: Config.load(), storeDirectory: store, logURL: log)
         panel = PanelWindow(engine: engine)
         hotkey = Hotkey(engine: engine, panel: panel)

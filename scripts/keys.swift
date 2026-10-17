@@ -1,4 +1,4 @@
-// Usage: keys fn+space | fn-hold <ms> | fn-tap | esc | return | type <text>
+// Usage: keys check | fn+space | fn-hold <ms> | fn-tap | esc | return | type <text>
 import CoreGraphics
 import Foundation
 
@@ -36,6 +36,8 @@ guard CGPreflightPostEventAccess() else {
 
 let args = CommandLine.arguments.dropFirst()
 switch args.first {
+case "check":
+    print("post-events: ok")
 case "fn+space":
     fn(down: true)
     key(space, flags: .maskSecondaryFn)
@@ -62,6 +64,6 @@ case "type":
         }
     }
 default:
-    FileHandle.standardError.write(Data("usage: keys fn+space | fn-hold <ms> | fn-tap | esc | return | type <text>\n".utf8))
+    FileHandle.standardError.write(Data("usage: keys check | fn+space | fn-hold <ms> | fn-tap | esc | return | type <text>\n".utf8))
     exit(64)
 }

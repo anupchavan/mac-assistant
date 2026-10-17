@@ -118,6 +118,7 @@ enum AppSocketClient {
         }
         if options.keyMode { return exitCode }
         if object["type"] as? String == "quiet" { return exitCode }
+        if object["type"] as? String == "ignored" { return 4 }
       }
     }
   }

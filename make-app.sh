@@ -54,7 +54,7 @@ PLIST
 fi
 
 if [[ "${1:-}" == "run" ]]; then
-  pkill -x Quicky 2>/dev/null || true
+  pkill -f "$PWD/$APP/Contents/MacOS/Quicky" 2>/dev/null || true
   sleep 0.3
   # Launch through LaunchServices so macOS attributes privacy prompts to the app, not the terminal.
   open --stdout "$PWD/$OUT/quicky.log" --stderr "$PWD/$OUT/quicky.log" "$APP"

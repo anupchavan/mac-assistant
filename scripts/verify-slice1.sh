@@ -5,7 +5,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 
 KEYS=build/verify/QuickyKeys.app
-LOG="$HOME/Library/Logs/Quicky/quicky.log"
+LOG="$HOME/Library/Logs/Quicky/verify.log"
 fails=0
 
 keys() { open -n -W -g "$KEYS" --args "$@"; sleep 0.3; }
