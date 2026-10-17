@@ -2,22 +2,22 @@
 
 ## Result
 
-Slice 1 is implemented: typed asks move through the pure `Session`/`Turn` reducers, stream Sarvam text through the actor-owned runner, commit revisioned chat history, project a `PanelScene`, and run headlessly through the JSON Lines CLI. `Package.swift`, the app target, `docs/`, `make-app.sh`, and `Info.plist` were not changed.
+Slice 1 and the lead-review fixes are complete. Replay now validates every complete HTTP request body, checked-in fixtures pin the system prompt by SHA-256, the persisted chat log allocates process-independent turn IDs, and the sole public `Engine` initializer synchronously restores `state.json`. The typing gesture now closes an already-open typing panel.
 
-The implementation uses no `@unchecked Sendable`, `nonisolated(unsafe)`, or `@preconcurrency` escape hatch.
+The requested readability pass is a separate commit from the behavior fixes. `Package.swift`, the app target, `docs/`, `make-app.sh`, and `Info.plist` were not changed. The implementation uses no `@unchecked Sendable`, `nonisolated(unsafe)`, or `@preconcurrency` escape hatch.
 
-## Implementation notes
+## Review fixes
 
-- `Session.handle(_:at:)`, `Turn.reduce`, and `ChatLog.apply` own the slice-1 state transitions.
-- `Engine` stays on the main actor, starts actor-owned work without doing I/O in `send`, rejects completions without a live effect, and schedules gesture ticks from `Session.nextDeadline`.
-- Sarvam uses `/v1/chat/completions`, explicit `reasoning_effort: null` for fast requests, SSE content deltas, cross-chunk `<think>` removal, one guarded key reload after a 401, and sanitized user errors.
-- The system prompt SHA-256 is pinned by a test to `4d4c0b04ac3b66221b8b35af4edfe1525d378fa5460a9dd6e05595cd840de28a`.
-- `Store` atomically writes one `state.json`; it checks the on-disk revision before writing, and process restarts continue at the next revision.
-- Replay request bodies are exact after the fixture-declared `messages.0.content` volatile field is removed. A body fingerprint plus the CLI ask preflight covers a Foundation transport retry that can arrive without its already-consumed HTTP body. Unexpected requests, mismatches, and unconsumed expectations exit 1.
-- `hello-hi` was seeded from a live `--record` run and split into two deterministic visible chunks. `cancel-long` was derived from a live recorded long answer; volatile wire metadata was removed and its recorded relative token pacing was rebased so the virtual 300 ms cancellation has a useful prefix.
-- `--trace` prints request bodies but never request headers or keys.
+- Removed the production-only replay header and the CLI ask preflight. `ReplayServer` reads through the HTTP header terminator, parses `Content-Length`, then reads exactly that many body bytes before decoding and matching JSON. Missing or malformed bodies fail. Unexpected additional requests fail, so any transport retry must consume its own expectation. A real URLSession-to-loopback integration test completed with one request and one consumed expectation; no retry occurred in that test.
+- Replaced the fixture field exemption with `content_sha256`. Replay hashes `messages[0].content`, compares it with the fixture's pinned `Prompt.system` hash, removes that one already-validated value, and exactly matches the rest of the body.
+- Moved turn-ID allocation into `ChatLog`. Its next turn number is encoded in `state.json`, and older stored states derive the next number from existing records.
+- Consolidated Engine construction into `init(device:config:storeDirectory:logURL:fixedWall:deviceName:)`, whose last three arguments have defaults. It synchronously loads stored state before constructing the session. The app's three-label call remains valid, and the CLI uses the same initializer.
+- Added the typing + `.typed` -> hidden transition and a reducer test.
+- Reformatted `Engine.swift`, `Session.swift`, `Turn.swift`, `Chats.swift`, `main.swift`, `ReplayServer.swift`, and `Errors.swift` so statements have normal one-per-line layout.
 
 ## Verification
+
+All output below is from the final tree after both implementation commits.
 
 ### Build
 
@@ -31,10 +31,10 @@ Output:
 
 ```text
 Building for debugging...
-Build complete! (0.22 secs)
+Build complete! (0.20 secs)
 ```
 
-The two preceding SwiftPM cache warnings are caused by the managed sandbox making the user-level SwiftPM cache unwritable; the build completed.
+SwiftPM also printed two managed-sandbox warnings that its user-level configuration and security directories were not writable; the build completed.
 
 ### Tests
 
@@ -47,27 +47,31 @@ swift test --disable-sandbox
 Output:
 
 ```text
-Test Suite 'QuickyCoreTests.xctest' passed at 2026-10-17 13:42:52.916.
-     Executed 33 tests, with 0 failures (0 unexpected) in 0.647 (0.650) seconds
+Test Suite 'QuickyCoreTests.xctest' passed at 2026-10-17 13:49:33.075.
+     Executed 37 tests, with 0 failures (0 unexpected) in 0.451 (0.455) seconds
 ```
 
-The tests cover the slice-1 phase and stage transitions, Fn timing, explicit-null reasoning, prompt hash, sanitizer, cross-chunk think removal, Store ordering, chat continuation/history/cap, cancellation/late output, sub-5 ms Esc dispatch, JSON ordering, panel projection, and replay mismatch failure.
+The new coverage uses the actual `quicky` executable and loopback server to prove a complete URLSession body is accepted, a mismatched body is rejected, a wrong system-prompt hash is rejected, and two Engines using one store emit `t1` then `t2` while the second panel scene contains both turns.
 
-### Core import lint
+### Core import lint and removed mechanisms
 
-Command and result:
+Commands and results:
 
 ```text
 $ scripts/lint-core-imports.sh
 $ echo $?
 0
+
+$ grep -rn "Fingerprint\|fingerprint\|volatile" Sources Fixtures
+$ echo $?
+1
 ```
 
-The script produced no output.
+Both commands produced no output. The grep exit status is 1 because it found zero matches.
 
 ### Deterministic hello replay
 
-Each of three runs produced:
+Each of three fresh-store runs produced:
 
 ```jsonl
 {"type":"session","chat":"c1","device":"fixture"}
@@ -78,29 +82,18 @@ Each of three runs produced:
 {"type":"quiet"}
 ```
 
-The four pairwise diff files for hello and cancel were all empty:
+All exits were 0. Both pairwise diffs were empty:
 
 ```text
 0 /tmp/slice1-hello-diff12.out
 0 /tmp/slice1-hello-diff13.out
-0 /tmp/slice1-cancel-diff12.out
-0 /tmp/slice1-cancel-diff13.out
-0 total
 ```
 
 ### Deterministic cancellation replay
 
-Command used three times:
-
-```text
-quicky ask "Explain photosynthesis in detail, in at least ten sentences." \
-  --provider replay:Fixtures/replay/cancel-long --cancel-after-ms 300
-```
-
-The end of each identical output was:
+Each fresh-store run used `--cancel-after-ms 300`, exited 2, and ended identically:
 
 ```jsonl
-{"type":"token","text":" the","turn":"t1"}
 {"type":"token","text":" chloroplast","turn":"t1"}
 {"type":"token","text":"s","turn":"t1"}
 {"type":"token","text":" of","turn":"t1"}
@@ -112,11 +105,16 @@ The end of each identical output was:
 {"type":"quiet"}
 ```
 
-Exit codes: `2`, `2`, `2`.
+Both pairwise diffs were empty:
+
+```text
+0 /tmp/slice1-cancel-diff12.out
+0 /tmp/slice1-cancel-diff13.out
+```
 
 ### Two unauthorized responses
 
-Command exited 1:
+The replay exited 1 after exactly one reload:
 
 ```jsonl
 {"type":"session","chat":"c1","device":"fixture"}
@@ -127,47 +125,43 @@ Command exited 1:
 {"type":"quiet"}
 ```
 
-There is exactly one reload notice, then a sanitized terminal failure.
+### Wrong system-prompt hash
+
+A temporary copy of `hello-hi` with a 64-zero `content_sha256` exited 1 and ended with the clear replay error:
+
+```jsonl
+{"type":"error","message":"request system content hash mismatch"}
+```
 
 ### Live Sarvam and panel projection
 
-Command:
-
-```text
-quicky ask "Say hello in Hindi" --panel
-```
-
-Output:
+`quicky ask "Say hello in Hindi"` exited 0:
 
 ```jsonl
 {"type":"session","chat":"c1","device":"fixture"}
-{"type":"panel","scene":"panel thread=1"}
 {"type":"turn","ask":"Say hello in Hindi","chat":"c1","mode":"typed","route":"fast","turn":"t1"}
-{"type":"panel","scene":"panel thread=1"}
 {"type":"token","text":"नमस्ते","turn":"t1"}
-{"type":"panel","scene":"panel thread=1"}
-{"type":"token","text":"।","turn":"t1"}
-{"type":"panel","scene":"panel thread=1"}
-{"type":"done","outcome":"answered","retry":false,"total_ms":230,"ttft_ms":210,"turn":"t1"}
-{"type":"panel","scene":"panel thread=1"}
+{"type":"done","outcome":"answered","retry":false,"total_ms":259,"ttft_ms":259,"turn":"t1"}
 {"type":"quiet"}
-{"type":"panel","scene":"panel thread=1"}
 ```
 
-### Live same-store history
+The same command with `--panel` also exited 0, streamed `नमस्ते`, and emitted `{"type":"panel","scene":"panel thread=1"}` after session, turn, token, done, and quiet notices.
 
-Two live commands used the same newly-created store directory. Both turns stayed in chat `c1`:
+### Live same-store history and turn IDs
+
+Two live processes used one fresh store within five minutes. Both exited 0 and remained in `c1`:
 
 ```jsonl
 {"type":"turn","ask":"Reply with exactly: first","chat":"c1","mode":"typed","route":"agent","turn":"t1"}
-{"type":"done","outcome":"answered","retry":false,"total_ms":306,"ttft_ms":293,"turn":"t1"}
+{"type":"done","outcome":"answered","retry":false,"total_ms":218,"ttft_ms":217,"turn":"t1"}
 {"type":"quiet"}
-{"type":"turn","ask":"Reply with exactly: second","chat":"c1","mode":"typed","route":"agent","turn":"t1"}
-{"type":"done","outcome":"answered","retry":false,"total_ms":179,"ttft_ms":166,"turn":"t1"}
+{"type":"panel","scene":"panel thread=2"}
+{"type":"turn","ask":"Reply with exactly: second","chat":"c1","mode":"typed","route":"agent","turn":"t2"}
+{"type":"done","outcome":"answered","retry":false,"total_ms":206,"ttft_ms":197,"turn":"t2"}
 {"type":"quiet"}
 ```
 
-The second request's redacted-safe trace contained this real history segment before its newest user turn:
+The second request's key-free trace contained this real history before its newest user turn:
 
 ```json
 {"content":"Reply with exactly: first","role":"user"},
@@ -177,13 +171,9 @@ The second request's redacted-safe trace contained this real history segment bef
 
 Its persistence trace was `persist revision=2`.
 
-## Commits
+## Review commits
 
 ```text
-fd582af Build slice-one state and prompt models
-97aa18e Add streaming client runners and engine
-a9404c3 Add deterministic replay CLI and fixtures
-19fa9dd Cover slice-one reducers persistence and replay
-4118738 Harden replay timing and persisted history
-cfdf561 Keep shell device identity out of session defaults
+0ae07d1 Fix slice-one replay and persisted session state
+ec22229 Reformat slice-one control flow
 ```
