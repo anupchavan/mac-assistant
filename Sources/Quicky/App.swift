@@ -91,7 +91,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             i.representedObject = pane
             menu.addItem(i)
         }
-        let keys = item(Keys.sarvam == nil ? "✗  Sarvam key (add it in Settings…)" : "✓  Sarvam key", Keys.sarvam == nil ? #selector(openSettings) : nil)
+        let provider = Provider.current, hasKey = Keys.lookup(provider.keyNames) != nil
+        let keys = item(hasKey ? "✓  \(provider.name) key" : "✗  \(provider.name) key (add it in Settings…)", hasKey ? nil : #selector(openSettings))
         menu.addItem(keys)
         menu.addItem(item(Keys.openAI == nil ? "✗  OpenAI key (computer use off)" : "✓  OpenAI key", nil))
         menu.addItem(item("Settings…", #selector(openSettings), key: ","))
@@ -100,7 +101,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let right = item("Use right ⌥ instead of fn", #selector(toggleRightOption))
         right.state = model.hotkey.useRightOption ? .on : .off
         menu.addItem(right)
-        let vision = item("Use screenshots with gemma4", #selector(toggleVision))
+        let vision = item("Use screenshots", #selector(toggleVision))
         vision.state = (UserDefaults.standard.object(forKey: "visionAvailable") as? Bool ?? true) ? .on : .off
         menu.addItem(vision)
         menu.addItem(.separator())

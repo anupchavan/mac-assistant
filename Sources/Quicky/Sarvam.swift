@@ -1,7 +1,7 @@
 import Foundation
 
 struct APIError: LocalizedError {
-    enum Provider { case sarvam, openAI }
+    enum Provider { case sarvam, openAI, mistral }
     let status: Int
     let body: String
     var provider: Provider = .sarvam
@@ -20,10 +20,14 @@ struct APIError: LocalizedError {
         case (.openAI, 402), (.openAI, 429): return "OpenAI rate limit or no credits."
         case (.sarvam, 401), (.sarvam, 403): return "Your Sarvam key was refused. Paste a working one in Settings (⌘, from the menu-bar ?)."
         case (.sarvam, _) where isOutOfCredits: return "Sarvam rate limit or no credits. Add credits and press ↵ to retry."
-        case (_, 500...): return "\(provider == .openAI ? "OpenAI" : "Sarvam") is having trouble (\(status)). Press ↵ to retry."
-        default: return "\(provider == .openAI ? "OpenAI" : "Sarvam") returned an error (\(status))\(detail)"
+        case (.mistral, 401), (.mistral, 403): return "Your Mistral key was refused. Check MISTRAL_API_KEY in ~/.zshrc."
+        case (.mistral, _) where isOutOfCredits: return "Mistral rate limit or no credits. Check billing at console.mistral.ai and press ↵ to retry."
+        case (_, 500...): return "\(providerName) is having trouble (\(status)). Press ↵ to retry."
+        default: return "\(providerName) returned an error (\(status))\(detail)"
         }
     }
+
+    var providerName: String { switch provider { case .openAI: "OpenAI"; case .sarvam: "Sarvam"; case .mistral: "Mistral" } }
 
     /// The server's message, short and with anything key-like removed. Safe for the panel and the log.
     var sanitizedMessage: String {
@@ -45,9 +49,10 @@ struct APIError: LocalizedError {
 }
 
 enum MissingKey: LocalizedError {
-    case sarvam, openAI
+    case sarvam, openAI, mistral
     var errorDescription: String? {
         switch self {
+        case .mistral: return "No Mistral key found. Add export MISTRAL_API_KEY=… to ~/.zshrc."
         case .sarvam: return "No Sarvam key found. Add export SARVAM_API_KEY=… to ~/.zshrc."
         case .openAI: return "No OpenAI key found. Add export OPENAI_API_KEY=… to ~/.zshrc."
         }

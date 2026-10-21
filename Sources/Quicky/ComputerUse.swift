@@ -1,7 +1,7 @@
 import AppKit
 import ApplicationServices
 
-/// Computer use through OpenAI's Responses API (prompts.md §11). Sarvam decides and talks; this clicks.
+/// Computer use through OpenAI's Responses API (prompts.md §11). Sarvam or Mistral decides and talks; this clicks.
 final class ComputerUser {
     struct Handoff {
         var task: String
@@ -34,7 +34,7 @@ final class ComputerUser {
         Log.info("cua stop: \(reason)")
     }
 
-    // MARK: Handoff (Sarvam turns the ask into one instruction)
+    // MARK: Handoff (the deep model turns the ask into one instruction)
 
     /// .failure carries a question for the user, not an error.
     enum HandoffResult { case success(Handoff), failure(String) }
@@ -44,8 +44,8 @@ final class ComputerUser {
             ["role": "system", "content": Prompts.handoff],
             ["role": "user", "content": context.block(language: language, outputMode: "typed", includeOCR: true) + "\n\nASK: \(ask)"],
         ]
-        let model = Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b")
-        let text = try await SarvamChat.complete(model: model, messages: messages, reasoning: nil, maxTokens: 400)
+        let model = Provider.current.deepModel
+        let text = try await LLM.complete(model: model, messages: messages, reasoning: nil, maxTokens: 400)
         guard let obj = parseJSON(text) else { return .failure("I couldn't work out what to click.") }
         if let q = obj["ask_user"] as? String { return .failure(q) }
         return .success(Handoff(task: obj["task"] as? String ?? ask,

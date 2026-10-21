@@ -4,9 +4,10 @@ import SwiftUI
 
 /// Command-line checks against the real APIs, run from the built binary:
 ///   Quicky --probe keys
-///   Quicky --probe chat "what is 2+2"          (sarvam-105b, prints TTFT)
-///   Quicky --probe agent "open google.com" [v1] (agent route request; v1 = sarvam-105b instead of gemma4)
-///   Quicky --probe vision                      (front window → gemma4 on /v2; tells you if V2 is whitelisted)
+/// Each runs against the current provider (ASSISTANT_PROVIDER=sarvam|mistral, default mistral).
+///   Quicky --probe chat "what is 2+2"          (deep model, prints TTFT)
+///   Quicky --probe agent "open google.com" [v1] (agent route request; v1 = deep model instead of the vision model)
+///   Quicky --probe vision                      (front window → vision model)
 ///   Quicky --probe context                     (prints the context block for the front app)
 ///   Quicky --probe tts "namaste" [hi-IN]       (Bulbul socket, plays it, prints first-audio latency)
 ///   Quicky --probe stt [seconds]               (records from the mic, realtime STT, prints the transcript)
@@ -28,6 +29,43 @@ enum Probe {
         }
     }
 
+    /// 16 kHz 16-bit speech from Bulbul (REST), to feed the STT socket like the mic would.
+    static func sarvamSpeech16k(_ text: String) async throws -> Data {
+        var req = URLRequest(url: Sarvam.base.appendingPathComponent("text-to-speech"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(try Sarvam.key(), forHTTPHeaderField: "api-subscription-key")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text, "target_language_code": "en-IN", "model": "bulbul:v3",
+                                                                   "speaker": "shubh", "speech_sample_rate": 16000])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200,
+              let b64 = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["audios"] as? [String], let first = b64.first,
+              let pcm = Data(base64Encoded: first) else { throw APIError(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: String(data: data, encoding: .utf8) ?? "") }
+        return pcm
+    }
+
+    /// The same from Voxtral TTS: 24 kHz float32, decimated to 16 kHz 16-bit (fine for a test signal).
+    static func mistralSpeech16k(_ text: String) async throws -> Data {
+        var req = URLRequest(url: Mistral.base.appendingPathComponent("audio/speech"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(try Mistral.key())", forHTTPHeaderField: "Authorization")
+        req.httpBody = try JSONSerialization.data(withJSONObject: ["model": "voxtral-mini-tts-3-0", "input": text, "response_format": "pcm",
+                                                                   "voice_id": Keys.setting("MISTRAL_TTS_VOICE", default: "01a155a0-3da4-72d1-90d6-848eddd4765c")])
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200,
+              let b64 = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["audio_data"] as? String,
+              let f32 = Data(base64Encoded: b64) else { throw APIError(status: (resp as? HTTPURLResponse)?.statusCode ?? 0, body: String(data: data, encoding: .utf8) ?? "", provider: .mistral) }
+        let s24 = MistralTTS.int16(fromFloat32: f32)
+        let n24 = s24.count / 2, n16 = n24 * 2 / 3
+        var out = Data(count: n16 * 2)
+        s24.withUnsafeBytes { src in out.withUnsafeMutableBytes { dst in
+            let a = src.bindMemory(to: Int16.self), b = dst.bindMemory(to: Int16.self)
+            for i in 0..<n16 { b[i] = a[min(n24 - 1, i * 3 / 2)] }
+        } }
+        return out
+    }
+
     static func dispatch(_ cmd: String, _ rest: [String]) async throws {
         switch cmd {
         case "keys":
@@ -36,7 +74,7 @@ enum Probe {
             let q = rest.first ?? "Say hello in Hindi in five words."
             let t0 = Date()
             var first: Date?
-            for try await e in SarvamChat.stream(model: Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b"), version: .v1,
+            for try await e in LLM.stream(model: Provider.current.deepModel, version: .v1,
                                                  messages: [["role": "system", "content": Prompts.system], ["role": "user", "content": "OUTPUT_MODE: typed\n\nASK: \(q)"]],
                                                  reasoning: nil, maxTokens: 600) {
                 if case let .text(t) = e { if first == nil { first = Date() }; print(t, terminator: ""); fflush(stdout) }
@@ -54,12 +92,12 @@ enum Probe {
                            ["type": "image_url", "image_url": ["url": url]],
                            ["type": "text", "text": "ASK: \(ask)"]] as [[String: Any]]
             }
-            let model = v1 ? Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b") : Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4")
+            let model = v1 ? Provider.current.deepModel : Provider.current.visionModel
             var messages: [[String: Any]] = [["role": "system", "content": Prompts.system], ["role": "user", "content": content]]
             var call: (id: String, name: String, args: String)?
             var text = ""
             let t0 = Date()
-            for try await e in SarvamChat.stream(model: model, version: v1 ? .v1 : .v2, messages: messages,
+            for try await e in LLM.stream(model: model, version: v1 ? .v1 : .v2, messages: messages,
                                                  tools: Tools.declarations, reasoning: nil, maxTokens: 600) {
                 switch e {
                 case .text(let t): text += t; print(t, terminator: "")
@@ -76,7 +114,7 @@ enum Probe {
             messages.append(["role": "assistant", "content": text,
                              "tool_calls": [["id": call.id, "type": "function", "function": ["name": call.name, "arguments": call.args]]]])
             messages.append(["role": "tool", "tool_call_id": call.id, "content": "opened"])
-            for try await e in SarvamChat.stream(model: model, version: v1 ? .v1 : .v2, messages: messages, tools: Tools.declarations, toolChoice: "none", reasoning: nil, maxTokens: 300) {
+            for try await e in LLM.stream(model: model, version: v1 ? .v1 : .v2, messages: messages, tools: Tools.declarations, toolChoice: "none", reasoning: nil, maxTokens: 300) {
                 if case .text(let t) = e { print(t, terminator: "") }
             }
             print(String(format: "\n— follow-up OK, %.0f ms total", Date().timeIntervalSince(t0) * 1000))
@@ -86,21 +124,12 @@ enum Probe {
             await MainActor.run { RenderProbe.run(into: dir) }
         case "stt-ws":
             // Speech made by Sarvam TTS (REST, 16 kHz) streamed into our realtime STT socket like the mic would.
-            SarvamSTT.debug = true
+            SarvamSTT.debug = true; MistralSTT.debug = true
             let text = rest.first ?? "Can you close this tab?"
-            var req = URLRequest(url: Sarvam.base.appendingPathComponent("text-to-speech"))
-            req.httpMethod = "POST"
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.setValue(try Sarvam.key(), forHTTPHeaderField: "api-subscription-key")
-            req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text, "target_language_code": "en-IN", "model": "bulbul:v3",
-                                                                       "speaker": "shubh", "speech_sample_rate": 16000])
-            let (data, resp) = try await URLSession.shared.data(for: req)
-            guard (resp as? HTTPURLResponse)?.statusCode == 200,
-                  let b64 = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["audios"] as? [String], let first = b64.first,
-                  var pcm = Data(base64Encoded: first) else { print("tts failed: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "")"); return }
+            var pcm = try await Provider.current == .mistral ? mistralSpeech16k(text) : sarvamSpeech16k(text)
             if pcm.prefix(4) == "RIFF".data(using: .ascii)! { pcm = pcm.subdata(in: 44..<pcm.count) }
             print("speech: \(pcm.count / 32000) s")
-            let stt = SarvamSTT()
+            let stt = Provider.current.makeSTT()
             stt.connect()       // no wait: audio starts before the handshake, as with the mic
             var i = 0
             while i < pcm.count { stt.send(pcm.subdata(in: i..<min(i + 3200, pcm.count))); i += 3200; try await Task.sleep(nanoseconds: 100_000_000) }
@@ -144,6 +173,69 @@ enum Probe {
                 try chunks.map { String($0.data.count) }.joined(separator: "\n").write(toFile: out + ".sizes", atomically: true, encoding: .utf8)
                 try chunks.map { $0.data.prefix(16).map { String(format: "%02x", $0) }.joined() }.joined(separator: "\n").write(toFile: out + ".heads", atomically: true, encoding: .utf8)
             }
+        case "latency":
+            // Usage: latency [runs] [screenshot.jpg]. Medians for the current provider, nothing played aloud:
+            // answer first token (deep model), screenshot answer first token (vision model), first TTS audio,
+            // and STT final after the speaker stops (Hinglish speech streamed in real time, as the mic would).
+            let runs = Int(rest.first ?? "5") ?? 5
+            let p = Provider.current
+            let image = rest.dropFirst().first.flatMap { CGImageSourceCreateWithURL(URL(fileURLWithPath: $0) as CFURL, nil) }.flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+            var ctx = ScreenContext()
+            ctx.appName = "Safari"; ctx.bundleID = "com.apple.Safari"; ctx.windowTitle = "Speculative decoding explained"
+            let block = ctx.block(language: nil, outputMode: "voice", includeOCR: false)
+            func med(_ a: [Double]) -> String { a.isEmpty ? "n/a" : String(format: "%.0f ms", a.sorted()[a.count / 2]) }
+            func ttft(_ model: String, _ version: SarvamChat.Version, _ user: Any) async -> Double? {
+                let t0 = Date()
+                do {
+                    for try await e in LLM.stream(model: model, version: version, messages: [["role": "system", "content": Prompts.system], ["role": "user", "content": user]],
+                                                  reasoning: nil, maxTokens: 120) {
+                        if case let .text(t) = e, !t.isEmpty { return Date().timeIntervalSince(t0) * 1000 }
+                    }
+                } catch { print("  chat failed: \((error as? APIError)?.sanitizedMessage ?? error.localizedDescription)") }
+                return nil
+            }
+            print("\(p.name): deep \(p.deepModel), vision \(p.visionModel), \(runs) runs each")
+            var text: [Double] = [], vision: [Double] = [], tts: [Double] = [], stt: [Double] = []
+            for _ in 0..<runs { if let t = await ttft(p.deepModel, .v1, block + "\n\nASK: what is speculative decoding, in one line") { text.append(t) } }
+            print("answer first token:            \(med(text))  \(text.map { String(Int($0)) }.joined(separator: ","))")
+            if let image, let url = ContextCapture.jpegDataURL(image) {
+                for _ in 0..<runs {
+                    let user = [["type": "text", "text": block], ["type": "image_url", "image_url": ["url": url]], ["type": "text", "text": "ASK: what am I looking at"]] as [[String: Any]]
+                    if let t = await ttft(p.visionModel, .v2, user) { vision.append(t) }
+                    if p == .sarvam { try await Task.sleep(nanoseconds: 2_500_000_000) }   // V2 rate limit
+                }
+                print("screenshot answer first token: \(med(vision))  \(vision.map { String(Int($0)) }.joined(separator: ","))")
+            }
+            for _ in 0..<runs {
+                let t = p.makeTTS(language: "hi-IN")
+                let t0 = Date()
+                let got: Double? = await withCheckedContinuation { c in
+                    let once = NSLock(); var done = false
+                    func finish(_ v: Double?) { once.lock(); defer { once.unlock() }; if !done { done = true; c.resume(returning: v) } }
+                    t.onAudio = { _ in finish(Date().timeIntervalSince(t0) * 1000) }
+                    t.onError = { m in print("  tts failed: \(m)"); finish(nil) }
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 10) { finish(nil) }
+                    do { try t.connect() } catch { finish(nil); return }
+                    t.speak("Namaste! Main aapki screen dekh sakta hoon. Speculative decoding makes answers arrive faster.")
+                    t.flush()
+                }
+                t.close()
+                if let got { tts.append(got) }
+            }
+            print("first audio:                   \(med(tts))  \(tts.map { String(Int($0)) }.joined(separator: ","))")
+            var speech = try await mistralSpeech16k("Can you close this tab? Aur mujhe kal ka weather batao.")
+            if speech.prefix(4) == "RIFF".data(using: .ascii)! { speech = speech.subdata(in: 44..<speech.count) }
+            for _ in 0..<runs {
+                let s = p.makeSTT()
+                s.connect()
+                var i = 0
+                while i < speech.count { s.send(speech.subdata(in: i..<min(i + 3200, speech.count))); i += 3200; try await Task.sleep(nanoseconds: 100_000_000) }
+                let t0 = Date()
+                let (heard, lang) = await s.finish()
+                stt.append(Date().timeIntervalSince(t0) * 1000)
+                print("  heard \"\(heard)\" (\(lang ?? "?"))")
+            }
+            print("STT final after speech ends:   \(med(stt))  \(stt.map { String(Int($0)) }.joined(separator: ","))")
         case "prompt-bench":
             // Same pipeline (context block + screenshot for gemma4, reasoning off); only the system prompt differs.
             // Usage: prompt-bench <other-system-prompt-file> [runs] [image.png]. "{model}" and "{date}" are filled in.
@@ -162,8 +254,8 @@ enum Probe {
             print("fixed context (\(ctx.appName)), screenshot \(shotURL == nil ? "no" : "yes"); \(asks.count) asks × \(runs) runs per cell")
             struct Cell { var ttft: [Double] = [], total: [Double] = [], chars: [Int] = [], fails = 0, retries = 0 }
             var cells: [String: Cell] = [:]
-            let models = [(Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b"), SarvamChat.Version.v1),
-                          (Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4"), SarvamChat.Version.v2)]
+            let models = [(Provider.current.deepModel, SarvamChat.Version.v1),
+                          (Provider.current.visionModel, SarvamChat.Version.v2)]
             for (model, version) in models {
                 for r in 0..<(runs * asks.count) {
                     let ask = asks[r % asks.count]
@@ -180,7 +272,7 @@ enum Probe {
                         for attempt in 0..<4 {
                             let t0 = Date(); var first: Date?; var out = ""
                             do {
-                                for try await e in SarvamChat.stream(model: model, version: version, messages: [["role": "system", "content": system], ["role": "user", "content": user]],
+                                for try await e in LLM.stream(model: model, version: version, messages: [["role": "system", "content": system], ["role": "user", "content": user]],
                                                                      reasoning: nil, maxTokens: 900) {
                                     if case let .text(t) = e, !t.isEmpty { if first == nil { first = Date() }; out += t }
                                 }
@@ -223,9 +315,9 @@ enum Probe {
             /Users/me/Downloads/Screen Recording 2026-10-16 at 10.30.28 PM.mov
             OUTPUT_MODE: typed
             """
-            for (model, version) in [(Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b"), SarvamChat.Version.v1)] {
+            for (model, version) in [(Provider.current.deepModel, SarvamChat.Version.v1)] {
                 var name = "", args = ""
-                for try await e in SarvamChat.stream(model: model, version: version, messages: [["role": "system", "content": Prompts.system], ["role": "user", "content": block + "\n\nASK: \(ask)"]],
+                for try await e in LLM.stream(model: model, version: version, messages: [["role": "system", "content": Prompts.system], ["role": "user", "content": block + "\n\nASK: \(ask)"]],
                                                      tools: Tools.declarations, reasoning: nil, maxTokens: 600) {
                     if case let .toolCallDelta(_, _, n, a) = e { name += n ?? ""; args += a ?? "" }
                     if case let .text(t) = e { print(t, terminator: "") }
@@ -295,14 +387,14 @@ enum Probe {
             guard let shot = ctx.screenshot, let url = ContextCapture.jpegDataURL(shot) else { print("no screenshot (grant Screen Recording to the terminal/app)"); return }
             let t0 = Date()
             do {
-                let text = try await SarvamChat.complete(model: Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4"), version: .v2, messages: [
+                let text = try await LLM.complete(model: Provider.current.visionModel, version: .v2, messages: [
                     ["role": "user", "content": [["type": "text", "text": "What app and content is shown? One sentence."],
                                                  ["type": "image_url", "image_url": ["url": url]]] as [[String: Any]]],
                 ], maxTokens: 200)
                 print(text)
-                print(String(format: "— vision OK (%.0f ms). V2 is enabled for this key.", Date().timeIntervalSince(t0) * 1000))
+                print(String(format: "— vision OK (%.0f ms).", Date().timeIntervalSince(t0) * 1000))
             } catch {
-                print("— vision FAILED: \(error.localizedDescription)\nThe app will fall back to on-device OCR + sarvam-105b.")
+                print("— vision FAILED: \(error.localizedDescription)\nThe app will fall back to on-device OCR + the deep model.")
             }
         case "context":
             await ContextCapture.warmUp()   // the app does this at launch
@@ -312,8 +404,8 @@ enum Probe {
         case "tts":
             let text = rest.first ?? "Namaste! Main aapki screen dekh sakta hoon."
             let lang = rest.dropFirst().first ?? "hi-IN"
-            let player = PCMPlayer(sampleRate: 22050)
-            let tts = SarvamTTS(language: lang)
+            let player = PCMPlayer(sampleRate: Provider.current.ttsSampleRate)
+            let tts = Provider.current.makeTTS(language: lang)
             let t0 = Date()
             var first = true
             let finished = DispatchSemaphore(value: 0)
@@ -333,7 +425,7 @@ enum Probe {
         case "stt":
             let secs = Double(rest.first ?? "4") ?? 4
             let mic = Microphone()
-            let stt = SarvamSTT()
+            let stt = Provider.current.makeSTT()
             stt.onPartial = { print("… \($0)") }
             stt.onError = { print("stt error: \($0)") }
             stt.connect()

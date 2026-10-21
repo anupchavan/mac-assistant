@@ -67,12 +67,12 @@ final class AppModel: ObservableObject {
     let hotkey = HotkeyMonitor()
 
     private let mic = Microphone()
-    private var stt: SarvamSTT?
+    private var stt: SpeechToText?
     private var contextTask: Task<ScreenContext, Never>?
     private var contextAt = Date.distantPast
     private var turnTask: Task<Void, Never>?
-    private var tts: SarvamTTS?
-    private var player = PCMPlayer(sampleRate: 22050)
+    private var tts: TextToSpeech?
+    private var player = PCMPlayer(sampleRate: Provider.current.ttsSampleRate)
     private var ttsFinalReceived = false
     private var sentenceBuffer = ""
     private var spokenChars = 0          // answer characters handed to TTS
@@ -249,7 +249,7 @@ final class AppModel: ObservableObject {
 
     private func prerollListening() {
         captureContext()
-        let s = SarvamSTT()
+        let s = Provider.current.makeSTT()
         s.onPartial = { [weak self] text in self?.partial = text }
         s.onError = { [weak self] m in self?.notice = m }
         s.connect()
@@ -436,8 +436,8 @@ final class AppModel: ObservableObject {
 
     private func answer(ask: String, ctx: ScreenContext, route: Route, language: String?, voice: Bool) async throws {
         let mode = voice ? "voice" : "typed"
-        let fastModel = Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4")
-        let deepModel = Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b")
+        let fastModel = Provider.current.visionModel
+        let deepModel = Provider.current.deepModel
         let useVision = visionAvailable && ctx.screenshot != nil
         let system = Prompts.system     // identical on every turn so the prefix caches
 
@@ -457,7 +457,7 @@ final class AppModel: ObservableObject {
             if let shot = ctx.screenshot {
                 if useVision, let url = ContextCapture.jpegDataURL(shot) {
                     addStep("Looking closely at the screen")
-                    let desc = try? await SarvamChat.complete(model: fastModel, version: .v2, messages: [["role": "user", "content": [
+                    let desc = try? await LLM.complete(model: fastModel, version: .v2, messages: [["role": "user", "content": [
                         ["type": "text", "text": Prompts.describeForBlindModel + ask],
                         ["type": "image_url", "image_url": ["url": url]],
                     ] as [[String: Any]]]], maxTokens: 500)
@@ -482,7 +482,7 @@ final class AppModel: ObservableObject {
             try await streamAnswer(model: model, version: version, messages: messages, tools: tools, reasoning: reasoning,
                                    maxTokens: maxTokens, voice: voice, pid: ctx.pid, language: language)
         } catch let e as APIError where version == .v2 && !answerStarted && !toolRanThisTurn && [400, 401, 403, 404, 422].contains(e.status) {
-            // Vision (V2) isn't enabled for this key: fall back to on-device OCR + sarvam-105b, and remember.
+            // Vision (V2) isn't enabled for this key: fall back to on-device OCR + the deep model, and remember.
             Log.error("v2 refused (\(e.status)): \(e.sanitizedMessage); falling back to OCR")
             visionAvailable = false
             try await answer(ask: ask, ctx: ctx, route: route, language: language, voice: voice)
@@ -495,7 +495,7 @@ final class AppModel: ObservableObject {
         let t0 = Date()
         var inThink = false
         var assistantText = ""
-        for try await event in SarvamChat.stream(model: model, version: version, messages: messages, tools: tools,
+        for try await event in LLM.stream(model: model, version: version, messages: messages, tools: tools,
                                                  toolChoice: toolChoice, reasoning: reasoning, maxTokens: maxTokens) {
             try Task.checkCancellation()
             switch event {
@@ -634,12 +634,12 @@ final class AppModel: ObservableObject {
     /// mouse no longer stops it (Esc and the pill's Stop do).
     private func userMouse(dx: Double, dy: Double, clicked: Bool) {}
 
-    // MARK: - Voice out (Bulbul)
+    // MARK: - Voice out (Bulbul or Voxtral)
 
     private func startTTS(language: String?) {
         tts?.close()
         player.stop()
-        let t = SarvamTTS(language: Sarvam.ttsLanguage(for: language), sampleRate: 22050)
+        let t = Provider.current.makeTTS(language: language)
         t.onAudio = { [weak self] pcm in self?.player.enqueue(int16: pcm) }
         t.onFinal = { [weak self] in self?.ttsFinalReceived = true; self?.playbackDrained() }
         t.onError = { [weak self] m in Log.error("tts: \(m)"); self?.speakingEnded() }

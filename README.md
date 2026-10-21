@@ -25,10 +25,17 @@ Keys are never logged or shown back.
 
 | Variable | Used for |
 |---|---|
-| `SARVAM_API_KEY` | STT, chat, TTS (required) |
+| `MISTRAL_API_KEY` | STT, chat, TTS when the provider is Mistral (the default on this branch) |
+| `SARVAM_API_KEY` | STT, chat, TTS when `ASSISTANT_PROVIDER=sarvam` |
 | `OPENAI_API_KEY` | computer use (optional; without it those asks get a normal answer) |
 
-Optional overrides (environment or `~/.zshrc`): `ASSISTANT_STT_MODEL` (saaras:v4), `ASSISTANT_VISION_MODEL` (gemma4),
+`ASSISTANT_PROVIDER` picks the speech + language stack: `mistral` (default) or `sarvam`. Computer use is
+OpenAI either way. Mistral overrides: `MISTRAL_STT_MODEL` (voxtral-mini-transcribe-realtime-3-0),
+`MISTRAL_STT_DELAY_MS` (240), `MISTRAL_TTS_MODEL` (voxtral-mini-tts-3-0), `MISTRAL_TTS_VOICE` (Himanshu's voice id);
+`ASSISTANT_VISION_MODEL` / `ASSISTANT_DEEP_MODEL` default to mistral-small-latest / mistral-medium-latest.
+Voxtral TTS has no pace setting, so Voice speed in Settings only affects Bulbul.
+
+Sarvam overrides (environment or `~/.zshrc`): `ASSISTANT_STT_MODEL` (saaras:v4), `ASSISTANT_VISION_MODEL` (gemma4),
 `ASSISTANT_DEEP_MODEL` (sarvam-105b), `ASSISTANT_TTS_MODEL` (bulbul:v3), `ASSISTANT_TTS_SPEAKER` (shubh),
 `ASSISTANT_TTS_PACE` (1.0; Settings → Voice speed wins), `ASSISTANT_CUA_MODEL` (gpt-6-astra), `ASSISTANT_CUA_FALLBACK_MODEL` (gpt-6.1-sol),
 `ASSISTANT_SIGN_IDENTITY` (codesign identity for make-app.sh).
@@ -90,9 +97,10 @@ Voice answers stream sentence by sentence into Bulbul over a WebSocket; stopping
 
 ```bash
 B=build/Quicky.app/Contents/MacOS/Quicky
-$B --probe keys            # which keys were found (never prints them)
-$B --probe chat "hi"       # sarvam-105b TTFT
-$B --probe vision          # is gemma4 / V2 enabled for this key?
+$B --probe keys            # which keys were found (never prints them) and the current provider
+$B --probe latency 5 shot.jpg   # medians: answer / screenshot-answer first token, first TTS audio, STT final (silent)
+$B --probe chat "hi"       # deep model TTFT
+$B --probe vision          # does the vision model work for this key?
 $B --probe tts "namaste" hi-IN
 $B --probe stt 4           # speak for 4 s
 $B --probe context         # what the model would see from the front app
