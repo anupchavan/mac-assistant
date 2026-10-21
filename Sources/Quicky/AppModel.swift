@@ -639,6 +639,11 @@ final class AppModel: ObservableObject {
     private func startTTS(language: String?) {
         tts?.close()
         player.stop()
+        // Reload Keys can switch provider mid-run; a player at the wrong rate would change the voice's speed.
+        if player.sampleRate != Provider.current.ttsSampleRate {
+            player = PCMPlayer(sampleRate: Provider.current.ttsSampleRate)
+            player.onDrained = { [weak self] in self?.playbackDrained() }
+        }
         let t = Provider.current.makeTTS(language: language)
         t.onAudio = { [weak self] pcm in self?.player.enqueue(int16: pcm) }
         t.onFinal = { [weak self] in self?.ttsFinalReceived = true; self?.playbackDrained() }
