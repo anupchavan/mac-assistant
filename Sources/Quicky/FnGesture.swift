@@ -13,6 +13,7 @@ import Foundation
 struct FnGesture {
     enum Output: Equatable {
         case preroll, holdBegan, holdEnded(heldMs: Double), handsFree, handsFreeStop, typed, tap, cancel, discard
+        case controlDoubleTap
     }
 
     static let holdMs: Double = 200
@@ -125,5 +126,30 @@ struct FnGesture {
     private func deadlineStart() -> Double {
         if case let .down(at) = state { return at }
         return 0
+    }
+}
+
+/// Double-tap Control (either side): two clean presses within `gapMs`, each released within `maxPressMs`.
+/// Any other key, or another modifier held with Control, spoils it, so ⌃C, ⌃⌘Q etc. never fire.
+struct ControlDoubleTap {
+    static let maxPressMs: Double = 300
+    static let gapMs: Double = 400
+
+    private var downAt: Double?
+    private var lastTapUp: Double?
+    private var spoiled = false
+
+    mutating func down(_ t: Double) { downAt = t; spoiled = false }
+
+    /// Another key or modifier while Control is down, or between the taps.
+    mutating func spoil() { spoiled = true; lastTapUp = nil }
+
+    /// Returns true on the release that completes a double tap.
+    mutating func up(_ t: Double) -> Bool {
+        defer { downAt = nil }
+        guard let d = downAt, !spoiled, t - d <= Self.maxPressMs else { lastTapUp = nil; return false }
+        if let last = lastTapUp, d - last <= Self.gapMs { lastTapUp = nil; return true }
+        lastTapUp = t
+        return false
     }
 }

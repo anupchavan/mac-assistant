@@ -4,7 +4,7 @@ import SwiftUI
 
 /// Non-activating floating panel: it takes keys without activating our app, so the app the user
 /// was in stays frontmost (and its window is what we capture).
-final class AssistantPanel: NSPanel {
+final class QuickyPanel: NSPanel {
     init() {
         super.init(contentRect: NSRect(x: 0, y: 0, width: Grid.panelWidth, height: 160),
                    styleMask: [.nonactivatingPanel, .borderless], backing: .buffered, defer: false)
@@ -81,7 +81,7 @@ enum PanelPlacer {
 @MainActor
 final class PanelController {
     let model: AppModel
-    private let panel = AssistantPanel()
+    private let panel = QuickyPanel()
     private var pill: NSPanel?
     private var anchor: CGPoint = .zero     // top-left (or bottom-left if growing up) in AppKit coords
     private var growsUp = false

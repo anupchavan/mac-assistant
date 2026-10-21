@@ -7,7 +7,7 @@ is the hands when an ask needs clicking. Specs are in `docs/` (ui-spec v4 is the
 ## Build and run
 
 ```bash
-./make-app.sh run        # swift build -c release → build/Assistant.app, signed, launched
+./make-app.sh run        # swift build -c release → build/Quicky.app, signed, launched
 tail -f build/assistant.log
 swift test               # fn gesture machine, placement, router
 ```
@@ -54,6 +54,7 @@ the spoken answer. Playback also recovers by itself if the output device changes
 | Gesture | Does |
 |---|---|
 | Hold fn | push-to-talk; release sends |
+| Double-tap Control | hands-free: talk, then pause or double-tap Control again to send |
 | Double-tap fn | hands-free; tap fn (or pause) to send |
 | fn + Space, or shift + fn | type instead (shift + fn never turns the mic on); again while open closes it |
 | Tap fn while open | closes it (or stops speech if it's talking) |
@@ -88,7 +89,7 @@ Voice answers stream sentence by sentence into Bulbul over a WebSocket; stopping
 ## Probes (real APIs, from the terminal)
 
 ```bash
-B=build/Assistant.app/Contents/MacOS/Assistant
+B=build/Quicky.app/Contents/MacOS/Quicky
 $B --probe keys            # which keys were found (never prints them)
 $B --probe chat "hi"       # sarvam-105b TTFT
 $B --probe vision          # is gemma4 / V2 enabled for this key?

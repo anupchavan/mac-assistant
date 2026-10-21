@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         statusItem.button?.image = MenuBarIcon.image()
-        statusItem.button?.setAccessibilityLabel("Assistant")
+        statusItem.button?.setAccessibilityLabel("Quicky")
         let menu = NSMenu()
         menu.delegate = self
         statusItem.menu = menu

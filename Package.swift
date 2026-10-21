@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "Assistant",
+    name: "Quicky",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "Assistant",
-            path: "Sources/Assistant",
+            name: "Quicky",
+            path: "Sources/Quicky",
             linkerSettings: [
                 .linkedFramework("AppKit"),
                 .linkedFramework("ScreenCaptureKit"),
@@ -17,6 +17,6 @@ let package = Package(
                 .linkedFramework("ApplicationServices"),
             ]
         ),
-        .testTarget(name: "AssistantTests", dependencies: ["Assistant"], path: "Tests/AssistantTests"),
+        .testTarget(name: "QuickyTests", dependencies: ["Quicky"], path: "Tests/QuickyTests"),
     ]
 )

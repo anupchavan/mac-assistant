@@ -3,16 +3,16 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key><string>dev.anup.assistant</string>
-    <key>CFBundleName</key><string>Assistant</string>
-    <key>CFBundleDisplayName</key><string>Assistant</string>
-    <key>CFBundleExecutable</key><string>Assistant</string>
+    <key>CFBundleName</key><string>Quicky</string>
+    <key>CFBundleDisplayName</key><string>Quicky</string>
+    <key>CFBundleExecutable</key><string>Quicky</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleShortVersionString</key><string>0.1</string>
     <key>CFBundleVersion</key><string>1</string>
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
-    <key>NSMicrophoneUsageDescription</key><string>Hold fn and speak to ask about what's on your screen.</string>
+    <key>NSMicrophoneUsageDescription</key><string>Hold fn or double-tap Control and speak to ask about what's on your screen.</string>
     <key>NSAppleEventsUsageDescription</key><string>Reads the selected Finder files and the current browser tab so answers know what you mean.</string>
     <key>NSCalendarsFullAccessUsageDescription</key><string>Adds events to your calendar when you ask, after you confirm.</string>
     <key>NSRemindersFullAccessUsageDescription</key><string>Adds reminders when you ask, after you confirm.</string>

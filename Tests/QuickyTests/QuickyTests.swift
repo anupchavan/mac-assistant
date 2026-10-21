@@ -1,5 +1,5 @@
 import XCTest
-@testable import Assistant
+@testable import Quicky
 
 final class FnGestureTests: XCTestCase {
     func decisions(_ timeline: [GestureEvent], keepPreroll: Bool = false) -> [FnGesture.Output] {
@@ -128,5 +128,33 @@ final class APIErrorTests: XCTestCase {
         XCTAssertLessThanOrEqual(e.sanitizedMessage.count, 80)
         let bad = APIError(status: 400, body: #"{"error":{"message":"Tool messages found but no tools provided.","code":"invalid_request_error"}}"#)
         XCTAssertEqual(bad.errorDescription, "Sarvam returned an error (400): Tool messages found but no tools provided.")
+    }
+}
+
+final class ControlDoubleTapTests: XCTestCase {
+    func testDoubleTapFires() {
+        var c = ControlDoubleTap()
+        c.down(0); XCTAssertFalse(c.up(90))
+        c.down(250); XCTAssertTrue(c.up(330))
+    }
+    func testTooSlowBetweenTaps() {
+        var c = ControlDoubleTap()
+        c.down(0); _ = c.up(90)
+        c.down(600); XCTAssertFalse(c.up(680))
+    }
+    func testHeldControlIsNotATap() {
+        var c = ControlDoubleTap()
+        c.down(0); XCTAssertFalse(c.up(500))
+        c.down(600); XCTAssertFalse(c.up(680))
+    }
+    func testShortcutSpoils() {
+        var c = ControlDoubleTap()
+        c.down(0); _ = c.up(90)
+        c.down(200); c.spoil(); XCTAssertFalse(c.up(260))     // ⌃C as the second press
+    }
+    func testThirdTapStartsOver() {
+        var c = ControlDoubleTap()
+        c.down(0); _ = c.up(80); c.down(160); XCTAssertTrue(c.up(240))
+        c.down(320); XCTAssertFalse(c.up(400))
     }
 }

@@ -8,6 +8,7 @@ final class HotkeyMonitor {
     static let rightOptionKeyCode: Int64 = 61 // fallback modifier
     static let escKeyCode: Int64 = 53
     static let shiftKeyCodes: Set<Int64> = [56, 60]
+    static let controlKeyCodes: Set<Int64> = [59, 62]
 
     var useRightOption = UserDefaults.standard.bool(forKey: "useRightOption")
     var onGesture: ((FnGesture.Output) -> Void)?
@@ -27,6 +28,8 @@ final class HotkeyMonitor {
     }
 
     private var machine = FnGesture()
+    private var control = ControlDoubleTap()
+    private var controlIsDown = false
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var timer: DispatchWorkItem?
@@ -87,6 +90,18 @@ final class HotkeyMonitor {
         case .flagsChanged:
             let code = event.getIntegerValueField(.keyboardEventKeycode)
             let flags = event.flags
+            if Self.controlKeyCodes.contains(code) {
+                let down = flags.contains(.maskControl)
+                guard down != controlIsDown else { return Unmanaged.passUnretained(event) }
+                controlIsDown = down
+                let others: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskSecondaryFn]
+                if !flags.intersection(others).isEmpty { control.spoil() }
+                if down { control.down(Self.now()) }
+                else if control.up(Self.now()) { Log.info("control double-tap"); emit([.controlDoubleTap]) }
+                return Unmanaged.passUnretained(event)
+            }
+            // Any other modifier change spoils a Control double-tap in progress.
+            control.spoil()
             if keyIsDown, Self.shiftKeyCodes.contains(code), flags.contains(.maskShift) {
                 emit(machine.shiftDown(Self.now()))
                 return Unmanaged.passUnretained(event)
@@ -104,6 +119,7 @@ final class HotkeyMonitor {
             }
             return Unmanaged.passUnretained(event)
         case .keyDown:
+            control.spoil()
             let code = event.getIntegerValueField(.keyboardEventKeycode)
             if code == Self.escKeyCode, syntheticDepth == 0, !isSynthetic(event) {
                 if onEscape?() == true { return nil }

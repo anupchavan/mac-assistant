@@ -3,17 +3,17 @@ import Foundation
 import SwiftUI
 
 /// Command-line checks against the real APIs, run from the built binary:
-///   Assistant --probe keys
-///   Assistant --probe chat "what is 2+2"          (sarvam-105b, prints TTFT)
-///   Assistant --probe agent "open google.com" [v1] (agent route request; v1 = sarvam-105b instead of gemma4)
-///   Assistant --probe vision                      (front window → gemma4 on /v2; tells you if V2 is whitelisted)
-///   Assistant --probe context                     (prints the context block for the front app)
-///   Assistant --probe tts "namaste" [hi-IN]       (Bulbul socket, plays it, prints first-audio latency)
-///   Assistant --probe stt [seconds]               (records from the mic, realtime STT, prints the transcript)
-///   Assistant --probe route "block this user"
-///   Assistant --probe handoff "block this user"   (computer-use instruction only; never clicks)
-///   Assistant --probe render <dir>                (offscreen PNGs of the panel states; nothing appears on screen)
-///   Assistant --probe gesture                     (replays fn timelines through the state machine)
+///   Quicky --probe keys
+///   Quicky --probe chat "what is 2+2"          (sarvam-105b, prints TTFT)
+///   Quicky --probe agent "open google.com" [v1] (agent route request; v1 = sarvam-105b instead of gemma4)
+///   Quicky --probe vision                      (front window → gemma4 on /v2; tells you if V2 is whitelisted)
+///   Quicky --probe context                     (prints the context block for the front app)
+///   Quicky --probe tts "namaste" [hi-IN]       (Bulbul socket, plays it, prints first-audio latency)
+///   Quicky --probe stt [seconds]               (records from the mic, realtime STT, prints the transcript)
+///   Quicky --probe route "block this user"
+///   Quicky --probe handoff "block this user"   (computer-use instruction only; never clicks)
+///   Quicky --probe render <dir>                (offscreen PNGs of the panel states; nothing appears on screen)
+///   Quicky --probe gesture                     (replays fn timelines through the state machine)
 enum Probe {
     static func run(_ args: [String]) {
         let cmd = args.first ?? "keys"

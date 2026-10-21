@@ -145,6 +145,15 @@ final class AppModel: ObservableObject {
                 // A plain fn tap on an open, idle panel closes it (a tap that stopped speech only stops speech).
                 if visible && !tapStoppedSpeech && !busy && overlay != .confirm && cua == nil { hide() }
             }
+        case .controlDoubleTap:
+            // Hands-free from the keyboard: double-tap Control to start listening, again to send.
+            if listening && handsFree { hotkey.resetGesture(); endListening() }
+            else if !listening, cua == nil, overlay != .confirm {
+                if speaking { stopSpeaking() }
+                shownBeforeHold = visible
+                prerollListening()
+                beginListening(handsFree: true)
+            }
         case .cancel:
             cancelAll(); hide()
         case .discard:
