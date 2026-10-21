@@ -144,6 +144,88 @@ enum Probe {
                 try chunks.map { String($0.data.count) }.joined(separator: "\n").write(toFile: out + ".sizes", atomically: true, encoding: .utf8)
                 try chunks.map { $0.data.prefix(16).map { String(format: "%02x", $0) }.joined() }.joined(separator: "\n").write(toFile: out + ".heads", atomically: true, encoding: .utf8)
             }
+        case "stress":
+            // Usage: stress <data-dir> [runs] [screenshot.jpg]. Real app pipeline (system prompt, tools, context block,
+            // screenshot for the vision model) with preloaded "memory" from the .md/.txt files in <data-dir> at growing
+            // sizes, plus a recent chat history at the bigger sizes. A fact (the needle) sits in the middle of the memory.
+            // Per size: first run (cold) and the rest (same prefix, so prefix caching can help), and whether the needle
+            // was recalled. Sizes are approximate tokens (chars / 4).
+            guard let dir = rest.first else { print("usage: stress <data-dir> [runs] [image]"); return }
+            let runs = Int(rest.dropFirst().first ?? "3") ?? 3
+            let files = ((try? FileManager.default.contentsOfDirectory(atPath: dir)) ?? []).filter { $0.hasSuffix(".md") || $0.hasSuffix(".txt") }.sorted()
+            let corpus = files.compactMap { f in (try? String(contentsOfFile: dir + "/" + f, encoding: .utf8)).map { "## Document: \(f)\n\n\($0)" } }.joined(separator: "\n\n")
+            guard !corpus.isEmpty else { print("no .md/.txt files in \(dir)"); return }
+            let needle = "Dentist: Anup's appointment with Dr. Kavita Mehta is on Thursday 6 November at 4:40 pm, at the Banjara Hills clinic."
+            let profile = """
+            **Work context**
+
+            Anup is a student and builder in India working on Quicky, a native Swift voice assistant for the Mac, on Sarvam's speech and language models. He also builds Obsidian plugins, a handwriting font (Cyanide) and course assignments in compilers and machine learning.
+
+            **Personal context**
+
+            Prefers short, direct answers, Hinglish is fine. Works late at night. Uses Zed, Safari, Obsidian and Claude daily.
+
+            """
+            /// `tokens` of memory: profile, then real documents (repeated if needed) with the needle in the middle.
+            func memory(_ tokens: Int) -> String {
+                guard tokens > 0 else { return "" }
+                var body = ""
+                var round = 0
+                while body.count < tokens * 4 { round += 1; body += (round > 1 ? "\n\n(Archive copy \(round))\n\n" : "") + corpus }
+                body = String(body.prefix(tokens * 4))
+                let mid = body.index(body.startIndex, offsetBy: body.count / 2)
+                let cut = body[mid...].firstIndex(of: "\n") ?? mid
+                return "MEMORY (what you know about the user and their work; use it when relevant):\n\n" + profile
+                    + String(body[..<cut]) + "\n\n" + needle + "\n" + String(body[cut...])
+            }
+            /// Ten earlier turns cut from the corpus, like a long-running chat.
+            let history: [[String: Any]] = (0..<10).flatMap { i -> [[String: Any]] in
+                let start = corpus.index(corpus.startIndex, offsetBy: (i * 2_400) % max(1, corpus.count - 2_400))
+                let chunk = String(corpus[start...].prefix(2_000))
+                return [["role": "user", "content": "Explain this part of the plan: \(chunk.prefix(300))"], ["role": "assistant", "content": chunk]]
+            }
+            let image = rest.dropFirst(2).first.flatMap { CGImageSourceCreateWithURL(URL(fileURLWithPath: $0) as CFURL, nil) }.flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+            let shotURL = image.flatMap { ContextCapture.jpegDataURL($0) }
+            var ctx = ScreenContext()
+            ctx.appName = "Safari"; ctx.bundleID = "com.apple.Safari"; ctx.windowTitle = "Sarvam AI dashboard"
+            let block = ctx.block(language: nil, outputMode: "voice", includeOCR: false)
+                        let sizes = (ProcessInfo.processInfo.environment["STRESS_SIZES"] ?? "0,3000,8000,32000,100000").split(separator: ",").compactMap { Int($0) }
+            print("Sarvam, \(files.count) files (\(corpus.count / 4) tokens of text), \(runs) runs per size, tools \(Tools.declarations.count)")
+            print("model|memory_tokens|history|cold_ttft_ms|warm_ttft_med_ms|total_med_ms|needle|fails")
+            for (model, version, vision) in [(Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b"), SarvamChat.Version.v1, false), (Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4"), SarvamChat.Version.v2, true)] {
+                if vision && shotURL == nil { continue }
+                for size in sizes {
+                    let system = Prompts.system + (size > 0 ? "\n\n" + memory(size) : "")
+                    let hist = size >= 8_000 ? history : []
+                    var ttfts: [Double] = [], totals: [Double] = [], recalled = 0, fails = 0, lastError = ""
+                    for r in 0..<runs {
+                        let ask = r % 2 == 0 ? "when is my dentist appointment and with whom?" : "what's on my screen, in one line?"
+                        let user: Any = vision
+                            ? [["type": "text", "text": block], ["type": "image_url", "image_url": ["url": shotURL!]], ["type": "text", "text": "ASK: \(ask)"]] as [[String: Any]]
+                            : block + "\n\nASK: \(ask)"
+                        let messages = [["role": "system", "content": system]] + hist + [["role": "user", "content": user]]
+                        for attempt in 0..<4 {
+                            let t0 = Date(); var first: Date?; var out = ""
+                            do {
+                                for try await e in SarvamChat.stream(model: model, version: version, messages: messages, tools: Tools.declarations, reasoning: nil, maxTokens: 200) {
+                                    if case let .text(t) = e, !t.isEmpty { if first == nil { first = Date() }; out += t }
+                                    if case let .toolCallDelta(_, _, name, args) = e { out += "[tool \(name ?? "")\(args ?? "")]" }
+                                }
+                                if ProcessInfo.processInfo.environment["STRESS_VERBOSE"] != nil { print("  \(model) \(size) r\(r): \(out.prefix(160).replacingOccurrences(of: "\n", with: " "))") }
+                            } catch let e as APIError where e.status == 429 && attempt < 3 {
+                                try await Task.sleep(nanoseconds: UInt64(8 + attempt * 8) * 1_000_000_000); continue
+                            } catch { fails += 1; lastError = (error as? APIError)?.sanitizedMessage ?? error.localizedDescription; break }
+                            if let first { ttfts.append(first.timeIntervalSince(t0) * 1000); totals.append(Date().timeIntervalSince(t0) * 1000) } else { fails += 1; lastError = "no text" }
+                            if r % 2 == 0, out.contains("4:40") || out.lowercased().contains("mehta") { recalled += 1 }
+                            break
+                        }
+                        if vision { try await Task.sleep(nanoseconds: 2_500_000_000) }   // V2 rate limit
+                    }
+                    func med(_ a: [Double]) -> String { a.isEmpty ? "-" : String(format: "%.0f", a.sorted()[a.count / 2]) }
+                    let needleAsks = (runs + 1) / 2
+                    print("\(model)\(vision ? "+shot" : "")|\(size)|\(hist.count / 2)|\(ttfts.first.map { String(format: "%.0f", $0) } ?? "-")|\(med(Array(ttfts.dropFirst())))|\(med(totals))|\(size == 0 ? "n/a" : "\(recalled)/\(needleAsks)")|\(fails)\(lastError.isEmpty ? "" : " (\(lastError))")")
+                }
+            }
         case "prompt-bench":
             // Same pipeline (context block + screenshot for gemma4, reasoning off); only the system prompt differs.
             // Usage: prompt-bench <other-system-prompt-file> [runs] [image.png]. "{model}" and "{date}" are filled in.
