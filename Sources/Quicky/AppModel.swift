@@ -671,7 +671,9 @@ final class AppModel: ObservableObject {
     private func speakSentence(_ raw: String) {
         spokenChars += raw.count
         let clean = Self.cleanForSpeech(raw)
-        guard !clean.isEmpty else { return }
+        // Bulbul rejects text with no letters ("2.", an emoji) and that error ends the whole utterance.
+        // After an error tts is nil; setting speaking again would leave the panel stuck on Stop.
+        guard tts != nil, clean.range(of: #"\p{L}"#, options: .regularExpression) != nil else { return }
         if !speaking { speaking = true }
         tts?.speak(clean)
     }
