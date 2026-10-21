@@ -104,6 +104,7 @@ $B --probe cua-plan "block this user"   # the first real step computer use would
 $B --probe stt-ws "close this tab"     # TTS speech streamed into the realtime STT socket (no mic)
 $B --probe tts-dump "<text>" <out.wav>  # raw Bulbul stream: chunk sizes, headers, timing (no playback)
 $B --probe audio-devices   # which mic it will record from
+$B --probe prompt-bench <prompt.txt> [runs] [image]  # TTFT: our system prompt vs another, same pipeline, both models
 $B --probe media-test <dir>          # trim + join two synthetic clips with the video tool
 $B --probe agent-fixture "<ask>"    # which tool the model picks for an ask in a fixed Finder context
 $B --probe render <dir>   # offscreen PNGs of the panel states (nothing appears on screen)

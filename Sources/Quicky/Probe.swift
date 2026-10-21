@@ -144,6 +144,66 @@ enum Probe {
                 try chunks.map { String($0.data.count) }.joined(separator: "\n").write(toFile: out + ".sizes", atomically: true, encoding: .utf8)
                 try chunks.map { $0.data.prefix(16).map { String(format: "%02x", $0) }.joined() }.joined(separator: "\n").write(toFile: out + ".heads", atomically: true, encoding: .utf8)
             }
+        case "prompt-bench":
+            // Same pipeline (context block + screenshot for gemma4, reasoning off); only the system prompt differs.
+            // Usage: prompt-bench <other-system-prompt-file> [runs] [image.png]. "{model}" and "{date}" are filled in.
+            // The two prompts alternate request by request, and 429s back off and retry, so neither side gets the
+            // quiet half of the rate limit.
+            guard let file = rest.first, let other = try? String(contentsOfFile: file, encoding: .utf8) else { print("usage: prompt-bench <prompt-file> [runs] [image]"); return }
+            let runs = Int(rest.dropFirst().first ?? "3") ?? 3
+            var ctx = ScreenContext()
+            ctx.appName = "Safari"; ctx.bundleID = "com.apple.Safari"; ctx.windowTitle = "Speculative decoding explained"
+            ctx.browserURL = "https://arxiv.org/abs/2211.17192"
+            ctx.visibleText = "Fast Inference from Transformers via Speculative Decoding. Abstract: Inference from large autoregressive models like Transformers is slow - decoding K tokens takes K serial runs of the model. In this work we introduce speculative decoding - an algorithm to sample from autoregressive models faster without any changes to the outputs, by computing several tokens in parallel."
+            let image = rest.dropFirst(2).first.flatMap { CGImageSourceCreateWithURL(URL(fileURLWithPath: $0) as CFURL, nil) }.flatMap { CGImageSourceCreateImageAtIndex($0, 0, nil) }
+            let shotURL = image.flatMap { ContextCapture.jpegDataURL($0) }
+            let asks = ["what is this page about", "summarise what I'm looking at in one line", "what should I do next here"]
+            let date = { let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"; return f.string(from: Date()) }()
+            print("fixed context (\(ctx.appName)), screenshot \(shotURL == nil ? "no" : "yes"); \(asks.count) asks × \(runs) runs per cell")
+            struct Cell { var ttft: [Double] = [], total: [Double] = [], chars: [Int] = [], fails = 0, retries = 0 }
+            var cells: [String: Cell] = [:]
+            let models = [(Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b"), SarvamChat.Version.v1),
+                          (Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4"), SarvamChat.Version.v2)]
+            for (model, version) in models {
+                for r in 0..<(runs * asks.count) {
+                    let ask = asks[r % asks.count]
+                    // Alternate which prompt goes first each round.
+                    let order = r % 2 == 0 ? ["ours", "raycast"] : ["raycast", "ours"]
+                    for label in order {
+                        let system = label == "ours" ? Prompts.system : other.replacingOccurrences(of: "{model}", with: model).replacingOccurrences(of: "{date}", with: date)
+                        let text = ctx.block(language: nil, outputMode: "typed", includeOCR: false)
+                        let user: Any = version == .v2 && shotURL != nil
+                            ? [["type": "text", "text": text], ["type": "image_url", "image_url": ["url": shotURL!]], ["type": "text", "text": "ASK: \(ask)"]] as [[String: Any]]
+                            : text + "\n\nASK: \(ask)"
+                        let key = "\(model)|\(label)"
+                        var cell = cells[key] ?? Cell()
+                        for attempt in 0..<4 {
+                            let t0 = Date(); var first: Date?; var out = ""
+                            do {
+                                for try await e in SarvamChat.stream(model: model, version: version, messages: [["role": "system", "content": system], ["role": "user", "content": user]],
+                                                                     reasoning: nil, maxTokens: 900) {
+                                    if case let .text(t) = e, !t.isEmpty { if first == nil { first = Date() }; out += t }
+                                }
+                            } catch let e as APIError where e.status == 429 && attempt < 3 {
+                                cell.retries += 1; try await Task.sleep(nanoseconds: UInt64(8 + attempt * 8) * 1_000_000_000); continue
+                            } catch { cell.fails += 1; print("  fail (\(label), \(model)): \((error as? APIError)?.sanitizedMessage ?? error.localizedDescription)"); break }
+                            if let first {
+                                cell.ttft.append(first.timeIntervalSince(t0) * 1000); cell.total.append(Date().timeIntervalSince(t0) * 1000); cell.chars.append(out.count)
+                            } else { cell.fails += 1 }
+                            break
+                        }
+                        cells[key] = cell
+                        if version == .v2 { try await Task.sleep(nanoseconds: 2_500_000_000) }   // stay under the V2 rate limit
+                    }
+                }
+            }
+            func med(_ a: [Double]) -> Double { a.isEmpty ? .nan : a.sorted()[a.count / 2] }
+            func p90(_ a: [Double]) -> Double { a.isEmpty ? .nan : a.sorted()[min(a.count - 1, Int(Double(a.count) * 0.9))] }
+            for (model, _) in models { for label in ["ours", "raycast"] {
+                let c = cells["\(model)|\(label)"] ?? Cell()
+                print(String(format: "RESULT|%@|%@|%.0f|%.0f|%.0f|%d|%d|%d|%d", model, label, med(c.ttft), p90(c.ttft), med(c.total),
+                             c.chars.isEmpty ? 0 : c.chars.reduce(0, +) / c.chars.count, c.ttft.count, c.fails, c.retries))
+            } }
         case "media-test":
             // Two synthetic 4 s clips → keep 0–2.5 of the first + all of the second → expect 6.5 s.
             let dir = URL(fileURLWithPath: rest.first ?? NSTemporaryDirectory())
