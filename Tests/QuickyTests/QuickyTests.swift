@@ -192,10 +192,10 @@ final class SpeechGateTests: XCTestCase {
         XCTAssertEqual(g.silenceMs, 800)
     }
     func testNoiseTranscripts() {
-        XCTAssertTrue(SpeechGate.isNoise(" ... ", voicedMs: 2000))
-        XCTAssertTrue(SpeechGate.isNoise("Thank you.", voicedMs: 400))
-        XCTAssertFalse(SpeechGate.isNoise("Thank you.", voicedMs: 1500))
-        XCTAssertFalse(SpeechGate.isNoise("close this tab", voicedMs: 400))
+        XCTAssertTrue(SpeechGate.isNoise(" ... "))
+        XCTAssertTrue(SpeechGate.isNoise(""))
+        XCTAssertFalse(SpeechGate.isNoise("Hey."))
+        XCTAssertFalse(SpeechGate.isNoise("नमस्ते"))
     }
 }
 
