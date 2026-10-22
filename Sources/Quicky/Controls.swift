@@ -121,7 +121,7 @@ enum Controls {
                 guard keys.insert("\(kind)|\(label)|\(frame.map { "\(Int($0.minX)),\(Int($0.minY))" } ?? "")").inserted else { continue }
                 controls.append(Control(id: 0, role: kind, label: label, state: state, element: el, frame: frame))
             }
-            var table = keepIds ? ids.value : ([:], 1)
+            var table = keepIds ? ids.value : (map: [:], next: 1)
             var used = Set<Int>()
             controls = controls.map { c in
                 var id = table.map[c.slot] ?? 0
