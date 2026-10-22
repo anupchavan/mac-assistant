@@ -228,7 +228,8 @@ struct BottomBar: View {
         } else if !m.partial.isEmpty {
             text = m.partial; color = Theme.textSecondary
         } else {
-            text = m.turns.isEmpty ? "Hold fn to talk, or shift + fn to type" : "Hold fn to ask a follow-up"
+            let k = TriggerKey.chosen.symbol
+            text = m.turns.isEmpty ? "Hold \(k) to talk, or ⇧ \(k) to type" : "Hold \(k) to ask a follow-up"
             color = Theme.textTertiary
         }
         return Text(text)

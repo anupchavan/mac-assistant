@@ -1,16 +1,16 @@
 import AppKit
 import CoreGraphics
 
-/// Global CGEventTap for fn gestures, plus Esc and the computer-use stop signals.
-/// Active tap (can swallow fn+Space and Esc) when Accessibility is granted, else listen-only.
+/// Global CGEventTap for the trigger key's gestures (Settings › Shortcuts), plus Esc and the
+/// computer-use stop signals. Active tap (can swallow key + Space, Esc, and our Caps Lock Hyperkey)
+/// when Accessibility is granted, else listen-only.
 final class HotkeyMonitor {
-    static let fnKeyCode: Int64 = 63          // kVK_Function (also the Globe key)
-    static let rightOptionKeyCode: Int64 = 61 // fallback modifier
     static let escKeyCode: Int64 = 53
     static let shiftKeyCodes: Set<Int64> = [56, 60]
-    static let controlKeyCodes: Set<Int64> = [59, 62]
+    static let optionKeyCodes: Set<Int64> = [58, 61]
 
-    var useRightOption = UserDefaults.standard.bool(forKey: "useRightOption")
+    var trigger = TriggerKey.chosen
+    var capsLockHyper = CapsLockHyper.enabled
     var onGesture: ((FnGesture.Output) -> Void)?
     /// Return true to swallow the Esc key (panel is showing something Esc should stop).
     var onEscape: (() -> Bool)?
@@ -28,8 +28,8 @@ final class HotkeyMonitor {
     }
 
     private var machine = FnGesture()
-    private var control = ControlDoubleTap()
-    private var controlIsDown = false
+    private var hyper = HyperDetector()
+    private var capsIsDown = false
     private var tap: CFMachPort?
     private var source: CFRunLoopSource?
     private var timer: DispatchWorkItem?
@@ -78,7 +78,7 @@ final class HotkeyMonitor {
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes) }
         if let tap { CGEvent.tapEnable(tap: tap, enable: false); CFMachPortInvalidate(tap) }
         tap = nil; source = nil
-        keyIsDown = false
+        keyIsDown = false; capsIsDown = false
         machine.reset(); timer?.cancel()
     }
 
@@ -90,37 +90,45 @@ final class HotkeyMonitor {
         case .flagsChanged:
             let code = event.getIntegerValueField(.keyboardEventKeycode)
             let flags = event.flags
-            if Self.controlKeyCodes.contains(code) {
-                let down = flags.contains(.maskControl)
-                guard down != controlIsDown else { return Unmanaged.passUnretained(event) }
-                controlIsDown = down
-                let others: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskSecondaryFn]
-                if !flags.intersection(others).isEmpty { control.spoil() }
-                if down { control.down(Self.now()) }
-                else if control.up(Self.now()) { Log.info("control double-tap"); emit([.controlDoubleTap]) }
+            if trigger == .hyper {
+                if capsIsDown { return Unmanaged.passUnretained(event) }
+                switch hyper.flags(flags, at: Self.now()) {
+                case let .down(extra)?: triggerChanged(down: true, extra: extra)
+                case .up?: triggerChanged(down: false, extra: nil)
+                case nil: break
+                }
                 return Unmanaged.passUnretained(event)
             }
-            // Any other modifier change spoils a Control double-tap in progress.
-            control.spoil()
+            if trigger.keyCodes.contains(code) {
+                let down = trigger.isDown(flags)
+                guard down != keyIsDown else { return Unmanaged.passUnretained(event) }
+                if down {
+                    // Only ⇧ or ⌥ may be held with it; ⌘⌃ etc. mean it is part of someone else's shortcut.
+                    let held = flags.intersection([.maskCommand, .maskControl, .maskAlternate, .maskShift]).subtracting(trigger.ownFlags)
+                    guard held.isSubset(of: [.maskShift, .maskAlternate]) else { return Unmanaged.passUnretained(event) }
+                    triggerChanged(down: true, extra: held.contains(.maskShift) ? .shift : held.contains(.maskAlternate) ? .option : nil)
+                } else {
+                    triggerChanged(down: false, extra: nil)
+                }
+                return Unmanaged.passUnretained(event)
+            }
             if keyIsDown, Self.shiftKeyCodes.contains(code), flags.contains(.maskShift) {
-                emit(machine.shiftDown(Self.now()))
-                return Unmanaged.passUnretained(event)
-            }
-            let watched = useRightOption ? Self.rightOptionKeyCode : Self.fnKeyCode
-            guard code == watched else { return Unmanaged.passUnretained(event) }
-            let down = useRightOption ? flags.contains(.maskAlternate) : flags.contains(.maskSecondaryFn)
-            if down != keyIsDown {
-                keyIsDown = down
-                let t = Self.now()
-                let shift = flags.contains(.maskShift)
-                let out = down ? machine.fnDown(t, shift: shift) : machine.fnUp(t)
-                Log.info("fn \(down ? "down" : "up")\(shift ? " +shift" : "") → \(out.map { "\($0)" }.joined(separator: ", "))")
-                emit(out)
+                emit(machine.extraDown(.shift, Self.now()))
+            } else if keyIsDown, Self.optionKeyCodes.contains(code), flags.contains(.maskAlternate) {
+                emit(machine.extraDown(.option, Self.now()))
             }
             return Unmanaged.passUnretained(event)
         case .keyDown:
-            control.spoil()
             let code = event.getIntegerValueField(.keyboardEventKeycode)
+            if trigger == .hyper, capsLockHyper, code == CapsLockHyper.f18KeyCode {
+                if event.getIntegerValueField(.keyboardEventAutorepeat) == 0, !capsIsDown {
+                    capsIsDown = true
+                    let held = event.flags
+                    triggerChanged(down: true, extra: held.contains(.maskShift) ? .shift : held.contains(.maskAlternate) ? .option : nil)
+                }
+                return nil
+            }
+            if capsIsDown { event.flags.formUnion(HyperDetector.all) }   // Caps Lock + key is Hyper + key
             if code == Self.escKeyCode, syntheticDepth == 0, !isSynthetic(event) {
                 if onEscape?() == true { return nil }
                 return Unmanaged.passUnretained(event)
@@ -132,6 +140,12 @@ final class HotkeyMonitor {
             }
             return Unmanaged.passUnretained(event)
         case .keyUp:
+            if capsIsDown, event.getIntegerValueField(.keyboardEventKeycode) == CapsLockHyper.f18KeyCode {
+                capsIsDown = false
+                triggerChanged(down: false, extra: nil)
+                return nil
+            }
+            if capsIsDown { event.flags.formUnion(HyperDetector.all) }
             if swallowNextSpaceUp, event.getIntegerValueField(.keyboardEventKeycode) == Int64(FnGesture.spaceKeyCode) {
                 swallowNextSpaceUp = false
                 return nil
@@ -145,6 +159,25 @@ final class HotkeyMonitor {
         default:
             return Unmanaged.passUnretained(event)
         }
+    }
+
+    private func triggerChanged(down: Bool, extra: FnGesture.Extra?) {
+        guard down != keyIsDown else { return }
+        keyIsDown = down
+        let t = Self.now()
+        let out = down ? machine.fnDown(t, extra: extra) : machine.fnUp(t)
+        Log.info("\(trigger.label) \(down ? "down" : "up")\(extra.map { " +\($0)" } ?? "") → \(out.map { "\($0)" }.joined(separator: ", "))")
+        emit(out)
+    }
+
+    /// Settings changed the trigger key or the Caps Lock Hyperkey.
+    func reloadTrigger() {
+        trigger = TriggerKey.chosen
+        capsLockHyper = CapsLockHyper.enabled
+        CapsLockHyper.apply(trigger == .hyper && capsLockHyper)
+        keyIsDown = false; capsIsDown = false; hyper = HyperDetector()
+        machine.reset(); timer?.cancel()
+        Log.info("trigger \(trigger.label)\(trigger == .hyper ? (capsLockHyper ? " (Caps Lock)" : " (external)") : "")")
     }
 
     private func isSynthetic(_ e: CGEvent) -> Bool { e.getIntegerValueField(.eventSourceUserData) == Self.syntheticTag }

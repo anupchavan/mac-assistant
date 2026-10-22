@@ -98,10 +98,7 @@ final class AppModel: ObservableObject {
     private var actionFailedThisTurn = false   // a tool erred or changed nothing; never end such a turn in silence
     private var repairsThisTurn = 0            // model retries after its tool arguments failed ToolSchema
     static let maxRepairs = 2
-    private var visionAvailable: Bool {
-        get { UserDefaults.standard.object(forKey: "visionAvailable") as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: "visionAvailable") }
-    }
+    private var visionAvailable = true          // until this key's V2 refuses a screenshot, for this launch
 
     init() {
         let loaded = ChatStore.load()
@@ -148,7 +145,7 @@ final class AppModel: ObservableObject {
         case .handsFreeStop:
             endListening()
         case .typed:
-            // shift+fn / fn+Space toggles: opens typing, or closes the panel if it was already open.
+            // ⇧ + trigger / trigger + Space toggles: opens typing, or closes the panel if it was already open.
             let wasOpen = listening ? shownBeforeHold : visible
             discardPreroll()
             if wasOpen { hotkey.resetGesture(); hide() } else { showTyped() }
@@ -156,18 +153,13 @@ final class AppModel: ObservableObject {
             if listening && handsFree { endListening() }
             else if !listening {
                 discardPreroll()
-                // A plain fn tap on an open, idle panel closes it (a tap that stopped speech only stops speech).
+                // A plain trigger tap on an open, idle panel closes it (a tap that stopped speech only stops speech).
                 if visible && !tapStoppedSpeech && !busy && overlay != .confirm && cua == nil { hide() }
             }
-        case .controlDoubleTap:
-            // Hands-free from the keyboard: double-tap Control to start listening, again to send.
-            if listening && handsFree { hotkey.resetGesture(); endListening() }
-            else if !listening, cua == nil, overlay != .confirm {
-                if speaking { stopSpeaking() }
-                shownBeforeHold = visible
-                prerollListening()
-                beginListening(handsFree: true)
-            }
+        case .newChat:
+            discardPreroll()
+            newChat()
+            showTyped()
         case .cancel:
             cancelAll(); hide()
         case .discard:
@@ -569,7 +561,7 @@ final class AppModel: ObservableObject {
             try await streamAnswer(model: model, version: version, messages: messages, tools: tools, reasoning: reasoning,
                                    maxTokens: maxTokens, voice: voice, pid: ctx.pid, language: language)
         } catch let e as APIError where version == .v2 && !answerStarted && !toolRanThisTurn && [400, 401, 403, 404, 422].contains(e.status) {
-            // Vision (V2) isn't enabled for this key: fall back to on-device OCR + sarvam-105b, and remember.
+            // Vision (V2) isn't enabled for this key: fall back to on-device OCR + sarvam-105b until relaunch.
             Log.error("v2 refused (\(e.status)): \(e.sanitizedMessage); falling back to OCR")
             visionAvailable = false
             try await answer(ask: ask, ctx: ctx, route: route, language: language, voice: voice)

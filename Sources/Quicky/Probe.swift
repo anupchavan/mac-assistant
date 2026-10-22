@@ -590,8 +590,8 @@ enum Probe {
                 for ev in timeline {
                     switch ev {
                     case let .down(t): out += m.tick(t) + m.fnDown(t)
-                    case let .shiftDown(t): out += m.tick(t) + m.fnDown(t, shift: true)
-                    case let .shift(t): out += m.tick(t) + m.shiftDown(t)
+                    case let .shiftDown(t): out += m.tick(t) + m.fnDown(t, extra: .shift)
+                    case let .shift(t): out += m.tick(t) + m.extraDown(.shift, t)
                     case let .up(t): out += m.tick(t) + m.fnUp(t)
                     case let .key(c, t): out += m.tick(t) + m.otherKeyDown(c, t)
                     case let .wait(t): out += m.tick(t)
