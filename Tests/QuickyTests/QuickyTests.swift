@@ -354,6 +354,11 @@ final class ExtensionTests: XCTestCase {
         XCTAssertTrue(ExtensionPicker.close("who sang kun faya", "who sang kun faya kun"))
         XCTAssertFalse(ExtensionPicker.close("open youtube", "who sang kun faya kun"))
     }
+    func testAppleLinkDropsTracking() {
+        XCTAssertEqual(Music.appleLink("https://music.apple.com/in/album/kun-faya-kun/1440?i=1441&uo=4"),
+                       "https://music.apple.com/in/album/kun-faya-kun/1440?i=1441")
+        XCTAssertEqual(Music.appleLink("https://music.apple.com/in/album/rockstar/1440?uo=4"), "https://music.apple.com/in/album/rockstar/1440")
+    }
     func testSyncedLyricsAroundPosition() {
         let lrc = "[00:01.00] one\n[00:05.00] two\n[00:09.50] three\n[00:12.00] four"
         let out = LRCLib.around(lrc, at: 10)
