@@ -242,6 +242,28 @@ struct SpeechGate {
     ]
 }
 
+/// Holds back audio that isn't speech. Realtime STT invents words from silence (Saaras v4 writes
+/// "However, whatever happens, happens." over 4 s of digital zeros), so the socket only hears speech,
+/// a short lead-in before it, and a short tail after it. Runs on the audio thread.
+final class SpeechFilter {
+    private var gate = SpeechGate()
+    private var lead: [Data] = []
+    private var tail = 0
+
+    /// The chunks to send now (possibly none).
+    func pass(_ chunk: Data, level: Float) -> [Data] {
+        if gate.feed(level) {
+            tail = 10                                   // 1 s, so quiet word endings still go up
+            defer { lead.removeAll() }
+            return lead + [chunk]
+        }
+        if tail > 0 { tail -= 1; return [chunk] }
+        lead.append(chunk)
+        if lead.count > 3 { lead.removeFirst() }        // 300 ms, for soft word onsets
+        return []
+    }
+}
+
 /// Core Audio device lookups for choosing the mic.
 enum AudioDevices {
     static var defaultInputIsBluetooth: Bool {
