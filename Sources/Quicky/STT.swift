@@ -129,7 +129,9 @@ final class DeepgramSTT: NSObject, SpeechToText, URLSessionWebSocketDelegate {
         }
         if let b = queue.sync(execute: { backup }) { closeSocket(); return await b.finish(timeout: timeout) }
         closeSocket()
-        if !result.0.isEmpty { return result }
+        // smart_format can leave a dangling comma when the turn ends mid-phrase.
+        let tidy = result.0.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: #"[,;:]+$"#, with: "", options: .regularExpression)
+        if !tidy.isEmpty { return (tidy, result.1) }
         return await restFallback()
     }
 
