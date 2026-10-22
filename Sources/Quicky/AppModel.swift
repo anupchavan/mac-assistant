@@ -89,6 +89,7 @@ final class AppModel: ObservableObject {
     private var tapStoppedSpeech = false
     private var lastRetry: (() -> Void)?
     private var toolRanThisTurn = false     // never re-run a turn whose tool already acted
+    private var owesWords = false           // a lookup's result went back to the model, so the turn must end in words
     private var searchPrefetch: Task<String, Never>?   // speculative web search for the ask, started with the model call
     private var warmTTS: (socket: TextToSpeech, provider: TTS.Provider, at: Date)?   // opened while the user finishes speaking, adopted by startTTS
     private var lastLanguage: String?
@@ -364,6 +365,7 @@ final class AppModel: ObservableObject {
         notice = nil
         answerStarted = false
         toolRanThisTurn = false
+        owesWords = false
         actionFailedThisTurn = false
         repairsThisTurn = 0
         busy = true
@@ -574,9 +576,9 @@ final class AppModel: ObservableObject {
         do {
             try await streamAnswer(model: model, version: version, messages: messages, tools: tools, reasoning: reasoning,
                                    maxTokens: maxTokens, voice: voice, pid: ctx.pid, language: language)
-            if !answerStarted && !toolRanThisTurn {
-                // Nothing said and nothing done: say so instead of ending on a blank panel.
-                Log.error("turn ended with no answer and no action")
+            if !answerStarted && (!toolRanThisTurn || owesWords) {
+                // Nothing said and nothing done, or a lookup nobody put into words: say so instead of ending on a blank panel.
+                Log.error(owesWords ? "turn ended with a tool result but no answer" : "turn ended with no answer and no action")
                 addStep("The model returned nothing")
                 if let i = steps.indices.last { steps[i].state = .error }
             }
@@ -648,6 +650,7 @@ final class AppModel: ObservableObject {
             }
         }
         let ordered = calls.sorted(by: { $0.key < $1.key })
+        if hop > 0, assistantText.isEmpty, ordered.isEmpty { Log.error("follow-up from \(answeredBy) returned no text and no tool call") }
         if voice {
             if ordered.isEmpty {
                 flushTTS()
@@ -673,6 +676,8 @@ final class AppModel: ObservableObject {
             for (c, r) in zip(ran, results) { f.append(["role": "tool", "tool_call_id": c.id, "content": r]) }
             if voice && (tts == nil || ttsFinalReceived) { startTTS(language: language) }
             if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
+            owesWords = true
+            Log.info("follow-up to \(model) with \(ran.map(\.name).joined(separator: ", ")) (\(results.map(\.count).reduce(0, +)) chars)")
             try await streamAnswer(model: model, version: version, messages: f, tools: tools, toolChoice: choice, reasoning: reasoning,
                                    maxTokens: maxTokens, voice: voice, pid: pid, language: language, hop: hop + 1)
         }
