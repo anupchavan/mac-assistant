@@ -28,7 +28,7 @@ enum Keys {
     static func source(_ names: [String]) -> Source? { find(names)?.source }
 
     private static func find(_ names: [String]) -> (value: String, source: Source)? {
-        if [sarvamNames, openAINames, deepgramNames, vertexNames, aiStudioNames, elevenLabsNames].contains(names), let v = Keychain.get(names[0]), !v.isEmpty { return (v, .settings) }
+        if [sarvamNames, openAINames, deepgramNames, vertexNames, aiStudioNames, elevenLabsNames, Anthropic.keyNames].contains(names), let v = Keychain.get(names[0]), !v.isEmpty { return (v, .settings) }
         let env = ProcessInfo.processInfo.environment
         for n in names { if let v = env[n], !v.isEmpty { return (v, .environment) } }
         let file = shellExports()
@@ -86,7 +86,7 @@ enum Keys {
             guard let f = find(names) else { return "missing" }
             return "found in \(f.source.rawValue) (\(f.value.count) chars)"
         }
-        return "Sarvam key: \(mark(sarvamNames))\nOpenAI key: \(mark(openAINames))\nDeepgram key: \(mark(deepgramNames)) · STT: \(STT.provider.rawValue)\nGoogle Cloud key: \(mark(vertexNames)) · project: \(Gemini.project == nil ? "missing" : "set") · answers: \(Gemini.answerModel) · actions: \(Gemini.actionModel)\nElevenLabs key: \(mark(elevenLabsNames)) · TTS: \(TTS.provider.rawValue)"
+        return "Sarvam key: \(mark(sarvamNames))\nOpenAI key: \(mark(openAINames))\nDeepgram key: \(mark(deepgramNames)) · STT: \(STT.provider.rawValue)\nGoogle Cloud key: \(mark(vertexNames)) · project: \(Gemini.project == nil ? "missing" : "set") · answers: \(Gemini.answerModel) · actions: \(Gemini.actionModel)\nAnthropic key: \(mark(Anthropic.keyNames))\nElevenLabs key: \(mark(elevenLabsNames)) · TTS: \(TTS.provider.rawValue)"
     }
 }
 

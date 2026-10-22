@@ -397,12 +397,13 @@ enum SarvamChat {
     enum Version: String { case v1, v2 }
 
     /// `toolChoice` "none" is for the reply after a tool result: /v1 rejects tool messages unless tools are sent too.
-    /// A "gemini-…" model goes to Vertex in Mumbai. If Gemini fails before saying anything (bad key, quota,
-    /// outage), the same request goes to sarvam-105b so a turn never dies on the optional model.
+    /// A "gemini-…" model goes to Vertex in Mumbai, a "claude-…" model to the Anthropic API. If either fails
+    /// before saying anything (bad key, quota, outage), the same request goes to sarvam-105b so a turn never
+    /// dies on the optional model.
     static func stream(model: String, version: Version, messages: [[String: Any]], tools: [[String: Any]]? = nil,
                        toolChoice: String = "auto", reasoning: String? = nil, maxTokens: Int, temperature: Double? = nil,
                        json: Bool = false) -> AsyncThrowingStream<ChatEvent, Error> {
-        guard Gemini.isGemini(model) else {
+        guard Gemini.isOptional(model) else {
             return sarvamStream(model: model, version: version, messages: messages, tools: tools, toolChoice: toolChoice,
                                 reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json)
         }
@@ -410,8 +411,12 @@ enum SarvamChat {
             let task = Task {
                 var said = false
                 do {
-                    for try await e in Gemini.stream(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
-                                                     reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json) {
+                    let primary = Anthropic.isClaude(model)
+                        ? Anthropic.stream(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
+                                           reasoning: reasoning, maxTokens: maxTokens)
+                        : Gemini.stream(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
+                                        reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json)
+                    for try await e in primary {
                         said = true
                         cont.yield(e)
                     }
