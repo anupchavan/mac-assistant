@@ -53,10 +53,14 @@ enum Music: QuickyExtension {
     struct Hit {
         var title: String, artists: String, album = "", year = "", length = "", seconds: Double? = nil
         var source: String, link = "", extra = ""
+        /// Both links, labelled, so "open it on Apple Music" has a URL to open (or knows it isn't there).
+        var apple = "", youtube = ""
         var line: String {
-            [title, artists.isEmpty ? nil : "by \(artists)", album.isEmpty ? nil : "album \(album)", year.isEmpty ? nil : year,
-             length.isEmpty ? nil : length, extra.isEmpty ? nil : extra, link.isEmpty ? nil : link]
-                .compactMap { $0 }.joined(separator: " · ") + " [\(source)]"
+            let links = [apple.isEmpty ? "Apple Music: not found in the \(Music.country.uppercased()) store" : "Apple Music: \(apple)",
+                         youtube.isEmpty ? nil : "YouTube Music: \(youtube)"]
+            return ([title, artists.isEmpty ? nil : "by \(artists)", album.isEmpty ? nil : "album \(album)", year.isEmpty ? nil : year,
+                     length.isEmpty ? nil : length, extra.isEmpty ? nil : extra] + links)
+                .compactMap { $0 }.joined(separator: " · ")
         }
     }
 
@@ -74,7 +78,8 @@ enum Music: QuickyExtension {
             if let m = i.first(where: { same($0, h) }) {
                 if h.year.isEmpty { h.year = m.year }
                 if h.album.isEmpty { h.album = m.album }
-                h.extra = [m.extra, m.link].filter { !$0.isEmpty }.joined(separator: " · ")
+                h.extra = m.extra
+                h.apple = m.apple
                 h.source += "+itunes"
                 agreed.append(h)
             } else { others.append(h) }
@@ -86,9 +91,13 @@ enum Music: QuickyExtension {
         }.map(\.element)
         let itunesOnly = i.filter { m in !y.prefix(10).contains { same(m, $0) } }
         var out = agreed.map(\.line)
-        if let top = itunesOnly.first { out.append(top.line) }
+        // iTunes' top pick goes up only if it's about what was asked (its search returns something for anything).
+        let asked = Set(query.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 2 })
+        func relevant(_ h: Hit) -> Bool { !asked.isDisjoint(with: Set("\(h.title) \(h.artists)".lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))) }
+        var appleOnly = itunesOnly.filter(relevant)
+        if !appleOnly.isEmpty { out.append(appleOnly.removeFirst().line) }
         out += others.map(\.line)
-        out += itunesOnly.dropFirst().map(\.line)
+        out += appleOnly.map(\.line)
         out = Array(out.prefix(6))
         return out.isEmpty ? "No results for “\(query)”." : out.joined(separator: "\n")
     }
@@ -216,8 +225,9 @@ enum iTunes {
                              artists: r["artistName"] as? String ?? "", album: entity == "song" ? (r["collectionName"] as? String ?? "") : "",
                              year: String((r["releaseDate"] as? String ?? "").prefix(10)),
                              length: ms.map { Music.mmss($0 / 1000) } ?? "", seconds: ms.map { $0 / 1000 },
-                             source: "itunes", link: (r["trackViewUrl"] ?? r["collectionViewUrl"] ?? r["artistLinkUrl"]) as? String ?? "",
-                             extra: r["primaryGenreName"] as? String ?? "")
+                             source: "itunes", link: "",
+                             extra: r["primaryGenreName"] as? String ?? "",
+                             apple: Music.appleLink((r["trackViewUrl"] ?? r["collectionViewUrl"] ?? r["artistLinkUrl"]) as? String ?? ""))
         }
     }
 
@@ -231,12 +241,20 @@ enum iTunes {
             ((r["trackTimeMillis"] as? NSNumber).map { " (\(Music.mmss($0.doubleValue / 1000)))" } ?? "")
         }
         guard !tracks.isEmpty else { return nil }
-        let head = "\(a["collectionName"] as? String ?? q) by \(a["artistName"] as? String ?? "") · \(String((a["releaseDate"] as? String ?? "").prefix(4))) · \(a["copyright"] as? String ?? "") · \(a["collectionViewUrl"] as? String ?? "") [itunes]"
+        let head = "\(a["collectionName"] as? String ?? q) by \(a["artistName"] as? String ?? "") · \(String((a["releaseDate"] as? String ?? "").prefix(4))) · \(a["copyright"] as? String ?? "") · Apple Music: \(Music.appleLink(a["collectionViewUrl"] as? String ?? ""))"
         return ([head] + tracks).joined(separator: "\n")
     }
 }
 
 extension Music {
+    /// iTunes links carry tracking ("uo=4"); a clean music.apple.com link opens straight in the Music app.
+    static func appleLink(_ s: String) -> String {
+        guard var c = URLComponents(string: s) else { return s }
+        c.queryItems = c.queryItems?.filter { $0.name == "i" }
+        if c.queryItems?.isEmpty == true { c.queryItems = nil }
+        return c.string ?? s
+    }
+
     static func mmss(_ s: Double) -> String { String(format: "%d:%02d", Int(s) / 60, Int(s) % 60) }
 }
 
@@ -289,7 +307,7 @@ enum YTMusic {
         var secs: Double?
         if !length.isEmpty { secs = length.split(separator: ":").reduce(0) { $0 * 60 + (Double($1) ?? 0) } }
         let byline = artists.isEmpty ? (texts.first { $0 != "Song" && $0 != "Album" && $0 != "Single" && $0 != "EP" && $0 != length && $0 != year } ?? "") : artists.joined(separator: ", ")
-        return Music.Hit(title: title, artists: byline, album: album, year: year, length: length, seconds: secs, source: "ytmusic", link: link)
+        return Music.Hit(title: title, artists: byline, album: album, year: year, length: length, seconds: secs, source: "ytmusic", link: link, youtube: link)
     }
 
     static func search(_ q: String, kind: String) async -> [Music.Hit] {
@@ -308,7 +326,7 @@ enum YTMusic {
             return "\(i + 1). \(h.title)\(h.artists.isEmpty ? "" : " — \(h.artists)")\(h.length.isEmpty ? "" : " (\(h.length))")"
         }
         guard !tracks.isEmpty else { return nil }
-        return ([head.map { "\($0.title) · \($0.artists) · \($0.year) · \($0.link) [ytmusic]" } ?? q] + tracks).joined(separator: "\n")
+        return ([head.map { "\($0.title) · \($0.artists) · \($0.year) · YouTube Music: \($0.link) · Apple Music: not found in the \(Music.country.uppercased()) store" } ?? q] + tracks).joined(separator: "\n")
     }
 
     /// The lyrics tab of the best match (YouTube Music licenses these; most Indian and OST songs have them).
