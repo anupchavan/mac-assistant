@@ -595,7 +595,7 @@ final class AppModel: ObservableObject {
             for o in opens { results.append(await Tools.run(o, insertInto: pid)) }
             Log.info("tool open_url ×\(opens.count) → \(results.joined(separator: ", "))")
             // So "close them" next turn knows exactly which tabs these were.
-            noteOnTurn("Quicky opened these tabs: " + opens.map { $0.string("url") }.joined(separator: " "))
+            noteOnTurn("Quicky did: opened tabs " + opens.map { $0.string("url") }.joined(separator: " "))
             var followUp = messages
             followUp.append(["role": "assistant", "content": assistantText,
                              "tool_calls": opens.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.rawArguments]] }])
@@ -633,6 +633,8 @@ final class AppModel: ObservableObject {
         let result = call.name == "use_computer" ? "error: computer use isn't set up (no OpenAI key); tell the user which shortcut or click would do it"
             : await Tools.run(call, insertInto: pid)
         Log.info("tool \(call.name) → \(result)")
+        // So a later "undo that" or "close it" can see what this turn actually did.
+        if !result.hasPrefix("error") { noteOnTurn("Quicky did: \(call.name) \(call.rawArguments.prefix(200)) → \(result.prefix(120))") }
         if call.name == "insert_text", !result.hasPrefix("error") { hide(); return }
 
         var followUp = messages
