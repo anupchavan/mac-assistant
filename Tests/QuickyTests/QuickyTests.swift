@@ -329,3 +329,29 @@ final class ControlLabelTests: XCTestCase {
         XCTAssertFalse(Controls.needsNextStep("pressed button “Follow”"))
     }
 }
+
+final class ControlPickTests: XCTestCase {
+    func c(_ id: Int, _ label: String, _ role: String = "button", _ state: String = "") -> Control {
+        Control(id: id, role: role, label: label, state: state, element: AXUIElementCreateSystemWide(), frame: nil)
+    }
+    lazy var instagram = [c(1, "Instagram", "radio", "on"), c(17, "More options"), c(18, "Options", "popup"),
+                          c(20, "Following ▾"), c(21, "Message"), c(22, "Similar accounts")]
+
+    func testUnfollowGoesThroughFollowing() {
+        let p = ControlPick.pick("Unfollow them.", in: instagram)
+        XCTAssertEqual(p?.control.id, 20)
+        XCTAssertEqual(p?.then, ["unfollow"])
+        let menu = [c(40, "Add to Close Friends list"), c(41, "Mute"), c(42, "Restrict"), c(43, "Unfollow")]
+        XCTAssertEqual(ControlPick.item(["unfollow"], in: menu)?.id, 43)
+        XCTAssertNil(ControlPick.item(["unfollow"], in: [c(34, "Block"), c(35, "Restrict"), c(36, "Report")]))
+    }
+    func testJoinPicksTheButtonNotATab() {
+        let reddit = [c(17, "IOS 27.0.1 untethered Jailbreak release confirmed : r/jailbreak", "radio", "on"), c(30, "Join"), c(31, "User Flair")]
+        XCTAssertEqual(ControlPick.pick("Join the subreddit.", in: reddit)?.control.id, 30)
+    }
+    func testAmbiguousOrUnknownGoesToTheModel() {
+        XCTAssertNil(ControlPick.pick("Follow them", in: [c(1, "Follow"), c(2, "Follow")]))
+        XCTAssertNil(ControlPick.pick("what is this page about", in: instagram))
+        XCTAssertNil(ControlPick.pick("join", in: instagram))   // no Join here
+    }
+}

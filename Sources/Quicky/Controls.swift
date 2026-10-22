@@ -28,6 +28,9 @@ struct Control {
 enum Controls {
     /// The latest capture's controls by id, for the press tool. Replaced on every capture.
     static let latest = Locked<[Int: Control]>([:])
+    /// What the last press opened (a menu or dialog), for a second press picked in code.
+    static let lastOpenedBox = Locked<[Control]>([])
+    static var lastOpened: [Control] { lastOpenedBox.value }
 
     static let roles: [String: String] = [
         "AXButton": "button", "AXCheckBox": "checkbox", "AXRadioButton": "radio", "AXPopUpButton": "popup",
@@ -90,10 +93,26 @@ enum Controls {
                 }
             }
 
+            // Some sites (Reddit) draw buttons inside web components the search doesn't reach; walk the page then.
+            if let web = webAreas.first, found.count < 25 {
+                var q = [web]; var n = 0
+                let walkEnd = Date().addingTimeInterval(0.12)
+                while !q.isEmpty, n < 2500, found.count < limit * 2, Date() < walkEnd {
+                    let el = q.removeFirst(); n += 1
+                    AXUIElementSetMessagingTimeout(el, 0.03)
+                    let role: String = ContextCapture.attr(el, kAXRoleAttribute) ?? ""
+                    if roles[role] != nil, n > 1 { found.append(el); continue }
+                    if let kids: [AXUIElement] = ContextCapture.attr(el, kAXVisibleChildrenAttribute) ?? ContextCapture.attr(el, kAXChildrenAttribute) {
+                        q += kids.prefix(80)
+                    }
+                }
+                Log.info("controls: deep page walk read \(n) elements")
+            }
             var controls: [Control] = []
             var keys = Set<String>()
             let names = [kAXRoleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute, kAXHelpAttribute] as CFArray
-            for el in found where Date() < deadline.addingTimeInterval(0.05) && controls.count < limit {
+            let labelEnd = Date().addingTimeInterval(0.1)
+            for el in found where Date() < labelEnd && controls.count < limit {
                 AXUIElementSetMessagingTimeout(el, 0.05)
                 var values: CFArray?
                 guard AXUIElementCopyMultipleAttributeValues(el, names, AXCopyMultipleAttributeOptions(rawValue: 0), &values) == .success,
@@ -173,6 +192,7 @@ enum Controls {
     /// Instagram's Following → Unfollow), changed the screen, or changed nothing.
     static func press(_ id: Int, pid: pid_t?) async -> String {
         guard let c = latest.value[id] else { return "error: no control \(id) on screen now" }
+        lastOpenedBox.value = []
         let beforeControls = Array(latest.value.values)
         let before = Set(beforeControls.map(\.key))
         AXUIElementSetMessagingTimeout(c.element, 0.3)
@@ -194,7 +214,7 @@ enum Controls {
         }
         let nowKeys = Set(latest.value.values.map(\.key))
         let gone = beforeControls.filter { !nowKeys.contains($0.key) && $0.key != c.key }
-        if let opened = openedSurface(fresh, pressed: c) { return did + openedMarker + lines(opened, max: 30) }
+        if let opened = openedSurface(fresh, pressed: c) { lastOpenedBox.value = opened; return did + openedMarker + lines(opened, max: 30) }
         if fresh.isEmpty && gone.isEmpty && nowKeys.contains(c.key) { return did + unchangedMarker }
         if fresh.isEmpty && !gone.isEmpty { return did + closedMarker + gone.prefix(12).map { "“\($0.label)”" }.joined(separator: ", ") }
         return did

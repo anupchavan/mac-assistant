@@ -380,12 +380,17 @@ final class AppModel: ObservableObject {
                 addStep("Heard you in \(name.components(separatedBy: " (").first ?? name)", done: true)
             }
             if voice { startTTS(language: language) }
+            Log.info("ask: \(ask.prefix(200))")
             if await runReflex(ask: ask, ctx: ctx, voice: voice) {
                 Log.time("turn reflex total", since: t0)
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
                 return
             }
-            Log.info("ask: \(ask.prefix(200))")
+            if await runControlPick(ask: ask, ctx: ctx, voice: voice) {
+                Log.time("turn control pick total", since: t0)
+                finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
+                return
+            }
             var route = Router.route(ask, app: ctx.appName, computerUseAvailable: Keys.openAI != nil)
             // With the window's controls in hand, the model can press the button itself in milliseconds;
             // computer use (seconds per step) is only for what it can't reach.
@@ -669,6 +674,15 @@ final class AppModel: ObservableObject {
             }
         }
         var confirmed = false
+        // The model may only press a consequential control (Block, Delete, Send) the ask actually names;
+        // it once reached for Block while trying to unfollow. No card, no press: it hears why instead.
+        if call.name == "press", call.needsConfirm, let c = Controls.latest.value[Controls.id(call)],
+           let ask = chats.indices.contains(chatIndex) ? chats[chatIndex].turns.last?.ask : nil, !Reflex.related(ask, c.label) {
+            Log.info("refused model press of “\(c.label)”: not what was asked")
+            actionFailedThisTurn = true
+            try await followUp([call], ["error: not pressed. “\(c.label)” is not what the user asked for, and it can't be undone. Say in one short sentence that you couldn't find how to do what they asked here."], maxTokens: 120)
+            return
+        }
         if call.needsConfirm {
             if voice { flushTTS() }
             addStep("Waiting for you to confirm")
@@ -791,7 +805,51 @@ final class AppModel: ObservableObject {
         pendingTool = tool
         overlay = .confirm
         if !visible { show() }
-        return await withCheckedContinuation { confirmContinuation = $0 }
+        Log.info("confirm shown: \(tool.confirmTitle)")
+        let ok = await withCheckedContinuation { confirmContinuation = $0 }
+        Log.info("confirm \(ok ? "approved" : "declined")")
+        return ok
+    }
+
+    /// "Join the subreddit", "unfollow them": the control is picked in code (ControlPick), pressed, and for
+    /// an undo the item in the menu it opens is pressed too, with the confirm card where it matters. If the
+    /// expected item isn't there, nothing else gets pressed: Quicky says so. Returns false to let the model try.
+    private func runControlPick(ask: String, ctx: ScreenContext, voice: Bool) async -> Bool {
+        guard let p = ControlPick.pick(ask, in: ctx.controls) else { return false }
+        Log.info("control pick: \(p.control.line)\(p.then.isEmpty ? "" : " then \(p.then.joined(separator: "/"))")")
+        toolRanThisTurn = true
+        func press(_ c: Control) async -> String? {
+            let call = ToolCall(id: "pick", name: "press", arguments: ["id": c.id], rawArguments: "{\"id\": \(c.id)}")
+            if call.needsConfirm {
+                if voice { flushTTS() }
+                addStep("Waiting for you to confirm")
+                guard await askConfirm(tool: call) else { return nil }
+            }
+            addStep(call.statusText)
+            let r = await Tools.run(call, insertInto: ctx.pid)
+            Log.info("control pick → \(r.prefix(200))")
+            return r
+        }
+        func say(_ s: String) {
+            if voice && (tts == nil || ttsFinalReceived) { startTTS(language: nil) }
+            appendAnswer(s, voice: voice)
+            if voice { flushTTS() }
+        }
+        guard let r1 = await press(p.control) else { appendAnswer(voice ? "" : "Cancelled.", voice: false); return true }
+        if r1.hasPrefix("error") { say("That button didn't respond."); return true }
+        if p.then.isEmpty {
+            if r1.hasSuffix(Controls.unchangedMarker) { say("I pressed \(p.control.label), but nothing changed.") }
+            noteOnTurn("Quicky did: \(r1.prefix(120))")
+            return true
+        }
+        guard let item = ControlPick.item(p.then, in: Controls.lastOpened) else {
+            say("I opened \(p.control.label), but there's no \(p.then[0].capitalized) in it.")
+            return true
+        }
+        guard let r2 = await press(item) else { appendAnswer(voice ? "" : "Cancelled.", voice: false); return true }
+        if r2.hasPrefix("error") { say("\(item.label) didn't respond.") }
+        noteOnTurn("Quicky did: \(r1.prefix(80)), then \(r2.prefix(80))")
+        return true
     }
 
     private func askConfirm(computer: ComputerUser.Handoff) async -> Bool {
