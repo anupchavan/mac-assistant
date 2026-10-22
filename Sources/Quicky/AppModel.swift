@@ -94,6 +94,8 @@ final class AppModel: ObservableObject {
     private var firstAudioLogged = true
     private var lastWarm = Date.distantPast
     private var actionFailedThisTurn = false   // a tool erred or changed nothing; never end such a turn in silence
+    private var repairsThisTurn = 0            // model retries after its tool arguments failed ToolSchema
+    static let maxRepairs = 2
     private var visionAvailable: Bool {
         get { UserDefaults.standard.object(forKey: "visionAvailable") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "visionAvailable") }
@@ -363,6 +365,7 @@ final class AppModel: ObservableObject {
         answerStarted = false
         toolRanThisTurn = false
         actionFailedThisTurn = false
+        repairsThisTurn = 0
         busy = true
         steps = []
         let t0 = Date()
@@ -583,6 +586,7 @@ final class AppModel: ObservableObject {
             let call = ToolCall(id: c.id, name: c.name, arguments: a, rawArguments: c.args)
             // Same rules as below: the first call, plus more of the same kind for search and links.
             guard i == 0 || (c.name == lead && ["web_search", "open_url"].contains(c.name)), Self.runsEarly(call) else { return }
+            guard ToolSchema.problem(call, tools: tools ?? []) == nil else { return }
             if c.name == "web_search", i == 0, prefetched != nil { return }
             if c.name == "open_url", early.count >= 5 { return }
             if c.name == "press", notSetReply(call) != nil { return }
@@ -644,6 +648,31 @@ final class AppModel: ObservableObject {
             if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
             try await streamAnswer(model: model, version: version, messages: f, tools: tools, toolChoice: choice, reasoning: reasoning,
                                    maxTokens: maxTokens, voice: voice, pid: pid, language: language, hop: hop + 1)
+        }
+
+        // Arguments that don't fit the declared schema never run. The model gets the exact problem back and
+        // may fix it (maxRepairs per turn); after that the turn says plainly that nothing happened.
+        let problems = ordered.map { ToolSchema.problem(toolCall($0.key, $0.value), tools: tools ?? []) }
+        if problems.contains(where: { $0 != nil }) {
+            let sent = ordered.map { toolCall($0.key, $0.value) }
+            var results: [String] = []
+            for (n, p) in problems.enumerated() {
+                if let p { results.append(p); continue }
+                if let started = early[ordered[n].key] { results.append(await started.value); continue }
+                results.append("error: not run, because another call in this reply had bad arguments; send it again with the fixed one")
+            }
+            for p in problems.compactMap({ $0 }) { Log.info("tool args rejected (try \(repairsThisTurn + 1) of \(Self.maxRepairs + 1)): \(p)") }
+            if repairsThisTurn < Self.maxRepairs {
+                repairsThisTurn += 1
+                try await followUp(sent, results, maxTokens: 300, choice: "auto")
+            } else {
+                actionFailedThisTurn = true
+                addStep("Couldn't work out the request")
+                if let i = steps.indices.last { steps[i].state = .error }
+                let gaveUp = results.map { $0.hasPrefix("error") ? $0 + " (gave up after \(Self.maxRepairs + 1) tries; nothing was done)" : $0 }
+                try await followUp(sent, gaveUp, maxTokens: 120)
+            }
+            return
         }
 
         if first.name == "web_search" {

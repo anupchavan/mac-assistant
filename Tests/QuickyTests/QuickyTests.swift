@@ -361,3 +361,43 @@ final class ExtensionTests: XCTestCase {
         XCTAssertEqual(LRCLib.strip("[00:01.00] one\n[00:05.00] two"), "one\ntwo")
     }
 }
+
+final class ToolSchemaTests: XCTestCase {
+    private func call(_ name: String, _ raw: String) -> ToolCall {
+        let a = (try? JSONSerialization.jsonObject(with: Data(raw.utf8)) as? [String: Any]) ?? [:]
+        return ToolCall(id: "c", name: name, arguments: a, rawArguments: raw)
+    }
+    private func problem(_ name: String, _ raw: String) -> String? { ToolSchema.problem(call(name, raw), tools: Tools.declarations) }
+
+    func testGoodCallsPass() {
+        XCTAssertNil(problem("open_url", #"{"urls":["https://instagram.com/a","https://x.com/b"]}"#))
+        XCTAssertNil(problem("open_url", #"{"url":"https://youtube.com"}"#))      // single-url alias
+        XCTAssertNil(problem("press", #"{"id":3}"#))
+        XCTAssertNil(problem("type_text", #"{"id":2,"text":"hi","submit":false}"#))
+        XCTAssertNil(problem("web_search", #"{"query":"weather","why":"extra keys are ignored"}"#))
+        XCTAssertNil(problem("trim_and_merge_videos", #"{"clips":[{"path":"/a.mov","end":"9:35"}]}"#))
+    }
+
+    func testShapeProblemsNameTheField() {
+        XCTAssertEqual(problem("press", #"{"id":"3"}"#), #"error: press: id should be an integer, got the string "3""#)
+        XCTAssertEqual(problem("type_text", #"{"id":2}"#), #"error: type_text: missing required "text""#)
+        XCTAssertEqual(problem("type_text", #"{"id":2,"text":"x","submit":"yes"}"#), #"error: type_text: submit should be a boolean, got the string "yes""#)
+        XCTAssertEqual(problem("press", #"{"id":true}"#), "error: press: id should be an integer, got a boolean")
+        XCTAssertEqual(problem("open_url", #"{"urls":"https://a.com"}"#), #"error: open_url: urls should be an array, got the string "https://a.com""#)
+        XCTAssertEqual(problem("trim_and_merge_videos", #"{"clips":[{"start":"0:10"}]}"#), #"error: trim_and_merge_videos: missing required "clips[0].path""#)
+    }
+
+    func testLimitsAndValues() {
+        let six = (1...6).map { "\"https://a.com/\($0)\"" }.joined(separator: ",")
+        XCTAssertEqual(problem("open_url", "{\"urls\":[\(six)]}"), "error: open_url: urls has 6 items, at most 5 allowed")
+        XCTAssertEqual(problem("open_url", #"{"urls":["instagram.com/foo"]}"#), #"error: open_url: "instagram.com/foo" is not a full URL; pass complete https:// URLs"#)
+        XCTAssertEqual(problem("open_url", #"{"urls":[]}"#), #"error: open_url: "urls" is empty"#)
+        XCTAssertNil(problem("open_url", #"{"urls":["spotify:track:1"]}"#))
+    }
+
+    func testBrokenJSONAndUnknownTool() {
+        XCTAssertEqual(problem("press", #"{"id":3"#), #"error: press arguments are not a JSON object: {"id":3"#)
+        XCTAssertTrue(problem("click", "{}")?.hasPrefix(#"error: there is no tool named "click". Tools: web_search, open_url"#) ?? false)
+        XCTAssertNil(problem("copy_to_clipboard", #"{"text":"x"}"#))
+    }
+}
