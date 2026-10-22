@@ -1,4 +1,5 @@
 import XCTest
+import ApplicationServices
 @testable import Quicky
 
 final class FnGestureTests: XCTestCase {
@@ -247,12 +248,16 @@ final class ReflexTests: XCTestCase {
 
     func testLocalReplyAfterTools() {
         let close = ToolCall(id: "1", name: "press_shortcut", arguments: ["keys": "cmd+w"], rawArguments: "")
-        XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: false, language: "en-IN"), "Closed.")
+        // Visible actions say nothing: the screen already shows it.
+        XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: false, language: "en-IN"), "")
+        let find = ToolCall(id: "f", name: "press_shortcut", arguments: ["keys": "cmd+f"], rawArguments: "")
+        XCTAssertEqual(AppModel.localReply([find], results: ["pressed"], saidAlready: false, language: nil), "")
+        let press = ToolCall(id: "p", name: "press", arguments: ["id": 3], rawArguments: "")
+        XCTAssertNil(AppModel.localReply([press], results: ["pressed button “Play”" + Controls.unchangedMarker], saidAlready: false, language: nil))
         XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: true, language: nil), "")
         XCTAssertNil(AppModel.localReply([close], results: ["error: Safari isn't running"], saidAlready: false, language: nil))
-        XCTAssertNil(AppModel.localReply([close], results: ["pressed"], saidAlready: false, language: "ta-IN"))
         let links = (1...3).map { ToolCall(id: "\($0)", name: "open_url", arguments: ["url": "https://x.com/a\($0)"], rawArguments: "") }
-        XCTAssertEqual(AppModel.localReply(links, results: ["opened", "opened", "opened"], saidAlready: false, language: nil), "Opened 3 tabs.")
+        XCTAssertEqual(AppModel.localReply(links, results: ["opened", "opened", "opened"], saidAlready: false, language: nil), "")
         let search = ToolCall(id: "s", name: "web_search", arguments: ["query": "x"], rawArguments: "")
         XCTAssertNil(AppModel.localReply([search], results: ["[1] …"], saidAlready: false, language: nil))
     }
@@ -265,5 +270,61 @@ final class BrowserTabsTests: XCTestCase {
         XCTAssertTrue(BrowserTabs.matches("https://x.com/porterindia/status/1", wanted))
         XCTAssertFalse(BrowserTabs.matches("https://www.instagram.com/porter_india", wanted))
         XCTAssertFalse(BrowserTabs.matches("https://porter.in/", wanted))
+    }
+}
+
+final class ControlTests: XCTestCase {
+    func control(_ label: String) -> Control {
+        Control(id: 1, role: "button", label: label, state: "", element: AXUIElementCreateSystemWide(), frame: nil)
+    }
+    func testConsequentialLabelsAskFirst() {
+        XCTAssertTrue(control("Block @someone").consequential)
+        XCTAssertTrue(control("Delete").consequential)
+        XCTAssertTrue(control("Send").consequential)
+        XCTAssertFalse(control("Follow").consequential)
+        XCTAssertFalse(control("Like").consequential)
+        XCTAssertFalse(control("Mute").consequential)
+    }
+    func testLine() {
+        let c = Control(id: 7, role: "switch", label: "Dark mode", state: "off", element: AXUIElementCreateSystemWide(), frame: nil)
+        XCTAssertEqual(c.line, "7 | switch | Dark mode (off)")
+    }
+}
+
+final class TemporalityTests: XCTestCase {
+    func testAgo() {
+        let now = Date()
+        XCTAssertEqual(AppModel.ago(now.addingTimeInterval(-4), now: now), "4 s ago")
+        XCTAssertEqual(AppModel.ago(now.addingTimeInterval(-600), now: now), "10 min ago")
+        XCTAssertEqual(AppModel.ago(now.addingTimeInterval(-7200), now: now), "2 h ago")
+    }
+    func testPressedLabel() {
+        XCTAssertEqual(Controls.label(from: "pressed button “Follow”"), "Follow")
+        let move = ToolCall(id: "m", name: "move_files", arguments: ["paths": ["/a", "/b"], "destination": "/x"], rawArguments: "")
+        XCTAssertEqual(AppModel.localReply([move], results: ["moved 2 files"], saidAlready: false, language: nil), "Moved 2 files.")
+    }
+}
+
+final class ControlLabelTests: XCTestCase {
+    func testTidy() {
+        XCTAssertEqual(Controls.tidy("Following Down Chevron Icon"), "Following ▾")
+        XCTAssertEqual(Controls.tidy("Settings Icon"), "Settings")
+        XCTAssertEqual(Controls.tidy("Icon"), "Icon")
+        XCTAssertEqual(Controls.tidy("Follow"), "Follow")
+    }
+    func testNextStep() {
+        XCTAssertTrue(Controls.needsNextStep("pressed button “More”" + Controls.unchangedMarker))
+        XCTAssertTrue(Controls.needsNextStep("pressed button “Following ▾”" + Controls.openedMarker + "41 | button | Unfollow"))
+        XCTAssertFalse(Controls.needsNextStep("pressed button “Follow”"))
+    }
+}
+
+final class NotSetTests: XCTestCase {
+    func testUndoOfSomethingNotDoneIsRefused() {
+        XCTAssertEqual(Controls.notSetReply(ask: "Unfollow them.", label: "Follow"), "You're not following them.")
+        XCTAssertEqual(Controls.notSetReply(ask: "leave this subreddit", label: "Join"), "You're not a member.")
+        XCTAssertNil(Controls.notSetReply(ask: "Unfollow them.", label: "Following ▾"))
+        XCTAssertNil(Controls.notSetReply(ask: "follow them", label: "Follow"))
+        XCTAssertNil(Controls.notSetReply(ask: "unsubscribe", label: "Subscribed"))
     }
 }

@@ -134,6 +134,26 @@ Only escalate before the first sentence has been spoken; restarting mid-speech i
 
 ## 5. Agent path
 
+### When to add a tool
+
+Few general primitives plus rich context, not one tool per action. Every tool lengthens the prompt and is one more
+wrong choice for the model, so the list grows only when both hold:
+
+1. The model can't do it reliably with the tools it has (shortcuts, open_url, use_computer).
+2. The tool covers a class of targets, not one action. `close_tabs` (tabs by URL, any window) passes; "close the
+   four socials" would not.
+
+Reach for these first, in order:
+
+- **Context, not tools.** Give the model what it needs to see: PAGE_LINKS made "open their socials" one `open_url`
+  call; the per-turn action log ("Quicky did: …" in history) makes "close them" or "undo that" resolvable.
+- **Shortcuts are data.** Any keyboard-shortcut action goes through `press_shortcut`; the common ones live in a
+  table in the system prompt, never as their own tools.
+- **`use_computer` is the long tail.** Slow but general. Promote something to a tool only when the logs show it is
+  frequent and slow or flaky through `use_computer`.
+- **Reflexes are not tools.** Whole-utterance commands matched in code (Reflex.swift) skip the model for speed and
+  add nothing to the model's choice; that list can grow freely.
+
 System prompt = section 1 plus:
 
 ```

@@ -12,6 +12,9 @@ import SwiftUI
 ///   Quicky --probe stt [seconds] [sarvam|deepgram] (records from the mic, realtime STT, prints the transcript)
 ///   Quicky --probe stt-ws "text" [rounds] [-v] (same TTS audio through Sarvam and Deepgram; final-transcript latency)
 ///   Quicky --probe route "block this user"
+///   Quicky --probe controls [seconds]          (after a delay, lists the front window's CONTROLS and how long reading them took)
+///   Quicky --probe selection [seconds]         (after a delay, reads the front app's selected text: accessibility, then ⌘C fallback)
+///   Quicky --probe pick 4 "unfollow them|join" [models…] (which control each model would press; never runs it)
 ///   Quicky --probe reflex "close this tab"     (the no-model fast path: prints the tool call it would make, never runs it)
 ///   Quicky --probe handoff "block this user"   (computer-use instruction only; never clicks)
 ///   Quicky --probe render <dir>                (offscreen PNGs of the panel states; nothing appears on screen)
@@ -35,6 +38,30 @@ enum Probe {
         switch cmd {
         case "keys":
             print(Keys.report())
+        case "controls":
+            let wait = Double(rest.first ?? "3") ?? 3
+            print("switch to the app to read; reading in \(wait) s…")
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            guard let app = NSWorkspace.shared.frontmostApplication else { return }
+            let t0 = Date()
+            let cs = await Controls.harvest(pid: app.processIdentifier)
+            print("\(app.localizedName ?? "?"): \(cs.count) controls in \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
+            print(Controls.lines(cs, max: 200))
+        case "selection":
+            let wait = Double(rest.first ?? "3") ?? 3
+            print("select some text in another app; reading in \(wait) s…")
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            var ctx = ScreenContext()
+            guard let app = NSWorkspace.shared.frontmostApplication else { return }
+            ctx.pid = app.processIdentifier
+            let t0 = Date()
+            ContextCapture.readAX(&ctx)
+            print("focused: \(ctx.focused.isEmpty ? "none" : String(ctx.focused.prefix(80)))")
+            print("\(app.localizedName ?? "?"): accessibility \(ctx.selectionUnreadable ? "can't read the selection" : "“\(ctx.selection.prefix(200))”") (\(Int(Date().timeIntervalSince(t0) * 1000)) ms)")
+            if ctx.selectionUnreadable {
+                let s = await Selection.viaClipboard(pid: ctx.pid)
+                print("clipboard: \(s.map { "“\($0.prefix(200))”" } ?? "nothing copied")")
+            }
         case "reflex":
             AppIndex.load()
             let ask = rest.joined(separator: " ")
@@ -53,6 +80,50 @@ enum Probe {
                 if case let .text(t) = e { if first == nil { first = Date() }; print(t, terminator: ""); fflush(stdout) }
             }
             print(String(format: "\n— TTFT %.0f ms, total %.0f ms", ((first ?? Date()).timeIntervalSince(t0)) * 1000, Date().timeIntervalSince(t0) * 1000))
+        case "pick":
+            // Which control would each model press? One capture of the front window, the same agent-route
+            // context the app sends, every model asked every ask. Prints tool calls; never runs them.
+            // Quicky --probe pick 4 "unfollow them|join this" sarvam-105b gemini-3.5-flash
+            let wait = Double(rest.first ?? "4") ?? 4
+            let asks = (rest.dropFirst().first ?? "follow them").split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            let models = rest.count > 2 ? Array(rest.dropFirst(2)) : ["sarvam-105b", Gemini.answerModel]
+            print("switch to the page; capturing in \(wait) s…")
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            let ctx = await ContextCapture.capture()
+            print("\(ctx.appName) · \(ctx.browserURL) · \(ctx.controls.count) controls")
+            let block = ctx.block(language: nil, outputMode: "voice", includeOCR: false, includeLinks: true)
+            for ask in asks {
+                print("\n“\(ask)”")
+                for model in models {
+                    let messages: [[String: Any]] = [["role": "system", "content": Prompts.system],
+                                                     ["role": "user", "content": block + "\n\nASK: \(ask)"]]
+                    var calls: [Int: (name: String, args: String)] = [:]
+                    var text = ""
+                    let t0 = Date()
+                    do {
+                        for try await e in SarvamChat.stream(model: model, version: .v1, messages: messages,
+                                                             tools: Tools.declarations, reasoning: nil, maxTokens: 400) {
+                            switch e {
+                            case .text(let t): text += t
+                            case .toolCallDelta(let i, _, let name, let args):
+                                var c = calls[i] ?? ("", ""); c.name += name ?? ""; c.args += args ?? ""; calls[i] = c
+                            default: break
+                            }
+                        }
+                    } catch { print("  \(model): error \(error.localizedDescription)"); continue }
+                    let ms = Int(Date().timeIntervalSince(t0) * 1000)
+                    let shown = calls.keys.sorted().map { i -> String in
+                        let c = calls[i]!
+                        if c.name == "press", let d = c.args.data(using: .utf8),
+                           let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+                           let id = (j["id"] as? NSNumber)?.intValue, let ctl = ctx.controls.first(where: { $0.id == id }) {
+                            return "press → \(ctl.line)" + (Controls.notSetReply(ask: ask, label: ctl.label).map { " (refused: “\($0)”)" } ?? "")
+                        }
+                        return "\(c.name) \(c.args)"
+                    }
+                    print("  \(model) (\(ms) ms): \(shown.isEmpty ? "said “\(text.prefix(120))”" : shown.joined(separator: "; "))")
+                }
+            }
         case "agent":
             // The agent route exactly as the app sends it: gemma4 on /v2 with the screenshot and tools,
             // or sarvam-105b on /v1 with tools when given "v1".

@@ -48,6 +48,17 @@ struct Reflex {
         return rules.first { !$0.hinglish && $0.keys == k }?.reply
     }
 
+    /// Whether an ask has anything to do with a shortcut's meaning ("close the tab" ~ "Closed."). Shares a
+    /// word stem, or the ask itself is a reflex for the same keys (Hinglish "band karo" ~ cmd+w).
+    static func related(_ ask: String, _ meaning: String) -> Bool {
+        func stems(_ s: String) -> Set<String> {
+            Set(s.lowercased().split { !$0.isLetter }.map { String($0.prefix(4)) }.filter { $0.count >= 3 })
+        }
+        if !stems(ask).isDisjoint(with: stems(meaning)) { return true }
+        if let r = match(ask), let k = r.calls.first?.string("keys"), reply(forKeys: k) == meaning { return true }
+        return false
+    }
+
     /// Well-known sites for "open youtube" when no installed app has that name.
     static let sites: [String: (url: String, name: String)] = [
         "youtube": ("https://www.youtube.com", "YouTube"), "gmail": ("https://mail.google.com", "Gmail"),

@@ -90,6 +90,7 @@ final class AppModel: ObservableObject {
     private var turnStart = Date()
     private var firstAudioLogged = true
     private var lastWarm = Date.distantPast
+    private var actionFailedThisTurn = false   // a tool erred or changed nothing; never end such a turn in silence
     private var visionAvailable: Bool {
         get { UserDefaults.standard.object(forKey: "visionAvailable") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "visionAvailable") }
@@ -355,6 +356,7 @@ final class AppModel: ObservableObject {
         notice = nil
         answerStarted = false
         toolRanThisTurn = false
+        actionFailedThisTurn = false
         busy = true
         steps = []
         let t0 = Date()
@@ -362,7 +364,7 @@ final class AppModel: ObservableObject {
         firstAudioLogged = !voice
         if voice { lastLanguage = language }
         turnTask = Task {
-            let ctx = await freshContext()
+            var ctx = await freshContext()
             context = ctx
             if !chats.indices.contains(chatIndex) { chats.append(Chat()); chatIndex = chats.count - 1 }
             let prev = chats[chatIndex].turns.last
@@ -378,16 +380,32 @@ final class AppModel: ObservableObject {
                 addStep("Heard you in \(name.components(separatedBy: " (").first ?? name)", done: true)
             }
             if voice { startTTS(language: language) }
+            Log.info("ask: \(ask.prefix(200))")
             if await runReflex(ask: ask, ctx: ctx, voice: voice) {
                 Log.time("turn reflex total", since: t0)
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
                 return
             }
-            let route = Router.route(ask, app: ctx.appName, computerUseAvailable: Keys.openAI != nil)
+            // Selection the app won't expose: copy it, but only for asks about the screen, and after the
+            // reflexes so "close this tab" never waits on it. Finder's ⌘C copies files; its selection is read separately.
+            if ctx.selectionUnreadable, ctx.pid != 0, ctx.bundleID != "com.apple.finder", Router.looksAtScreen(ask),
+               let s = await Selection.viaClipboard(pid: ctx.pid) {
+                ctx.selection = s
+                context = ctx
+            }
+            var route = Router.route(ask, app: ctx.appName, computerUseAvailable: Keys.openAI != nil)
+            // With the window's controls in hand, the model can press the button itself in milliseconds;
+            // computer use (seconds per step) is only for what it can't reach.
+            if route == .computer, !ctx.controls.isEmpty { route = .agent }
             Log.info("route \(route.rawValue)")
             do {
                 if route == .computer { try await runComputer(ask: ask, ctx: ctx, language: language, voice: voice) }
                 else { try await answer(ask: ask, ctx: ctx, route: route, language: language, voice: voice) }
+                if actionFailedThisTurn, chats[chatIndex].turns.last?.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? false {
+                    if voice && (tts == nil || ttsFinalReceived) { startTTS(language: language) }
+                    appendAnswer("That didn't work.", voice: voice)
+                    if voice { flushTTS() }
+                }
                 Log.time("turn total", since: t0)
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
             } catch is CancellationError {
@@ -448,12 +466,22 @@ final class AppModel: ObservableObject {
 
     // MARK: - Answering
 
+    nonisolated static func ago(_ d: Date, now: Date = Date()) -> String {
+        let s = Int(now.timeIntervalSince(d))
+        if s < 90 { return "\(max(s, 1)) s ago" }
+        if s < 5400 { return "\(s / 60) min ago" }
+        return "\(s / 3600) h ago"
+    }
+
     private func historyMessages() -> [[String: Any]] {
         let previous = chats[chatIndex].turns.dropLast().suffix(6)
         var out: [[String: Any]] = []
-        for t in previous where !t.answer.isEmpty {
-            out.append(["role": "user", "content": t.contextNote.map { "\(t.ask)\n\n(\($0))" } ?? t.ask])
-            out.append(["role": "assistant", "content": t.rememberedAnswer])
+        for t in previous where !t.answer.isEmpty || t.contextNote != nil {
+            // When and where each earlier ask happened, so "search for X" four seconds after "open YouTube"
+            // reads as a follow-up on that screen, not a fresh question.
+            let when = "[\(Self.ago(t.at)) in \(t.appLabel.isEmpty ? "another app" : t.appLabel)]"
+            out.append(["role": "user", "content": "\(when) \(t.ask)" + (t.contextNote.map { "\n\n(\($0))" } ?? "")])
+            out.append(["role": "assistant", "content": t.answer.isEmpty ? "(did it, said nothing)" : t.rememberedAnswer])
         }
         return out
     }
@@ -461,7 +489,7 @@ final class AppModel: ObservableObject {
     private func answer(ask: String, ctx: ScreenContext, route: Route, language: String?, voice: Bool) async throws {
         let mode = voice ? "voice" : "typed"
         let fastModel = Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4")
-        let deepModel = Gemini.answerModel
+        let deepModel = route == .agent && !ctx.controls.isEmpty ? Gemini.actionModel : Gemini.answerModel
         // Only asks that point at the screen go to the vision model with the screenshot. A general question
         // ("when is Sarvam's 1T model launching?") goes to the main model, which answers from what it knows.
         let screenAsk = Router.looksAtScreen(ask)
@@ -523,7 +551,8 @@ final class AppModel: ObservableObject {
     }
 
     private func streamAnswer(model: String, version: SarvamChat.Version, messages: [[String: Any]], tools: [[String: Any]]?,
-                              toolChoice: String = "auto", reasoning: String?, maxTokens: Int, voice: Bool, pid: pid_t, language: String?) async throws {
+                              toolChoice: String = "auto", reasoning: String?, maxTokens: Int, voice: Bool, pid: pid_t, language: String?,
+                              hop: Int = 0) async throws {
         var calls: [Int: (id: String, name: String, args: String)] = [:]
         // Safe, instant tools start the moment their arguments are complete JSON, while the model is still
         // streaming (the next call, or just the closing events). A JSON object can't be a prefix of a longer
@@ -542,6 +571,7 @@ final class AppModel: ObservableObject {
             guard i == 0 || (c.name == lead && ["web_search", "open_url"].contains(c.name)), Self.runsEarly(call) else { return }
             if c.name == "web_search", i == 0, prefetched != nil { return }
             if c.name == "open_url", early.count >= 5 { return }
+            if c.name == "press", notSetReply(call) != nil { return }
             if c.name != "web_search" { toolRanThisTurn = true }
             Log.time("tool \(c.name)#\(i) args complete, starting", since: t0)
             early[i] = Task.detached { await Tools.run(call, insertInto: pid) }
@@ -584,20 +614,21 @@ final class AppModel: ObservableObject {
             }
         }
         guard let first = ordered.first?.value, !first.name.isEmpty else { return }
-        Log.time("tool call \(first.name) from \(model)", since: t0)
+        Log.time("tool call \(first.name) \(first.args.prefix(160)) from \(model)\(hop > 0 ? " (step \(hop + 1))" : "")", since: t0)
         func toolCall(_ i: Int, _ c: (id: String, name: String, args: String)) -> ToolCall {
             let a = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any]) ?? [:]
             return ToolCall(id: c.id.isEmpty ? "call_\(i)" : c.id, name: c.name, arguments: a, rawArguments: c.args)
         }
-        func followUp(_ ran: [ToolCall], _ results: [String], maxTokens: Int) async throws {
+        if first.name == "press", let c = Controls.latest.value[Controls.id(toolCall(0, first))] { Log.info("press target: \(c.line)") }
+        func followUp(_ ran: [ToolCall], _ results: [String], maxTokens: Int, choice: String = "none") async throws {
             var f = messages
             f.append(["role": "assistant", "content": assistantText,
                       "tool_calls": ran.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.rawArguments]] }])
             for (c, r) in zip(ran, results) { f.append(["role": "tool", "tool_call_id": c.id, "content": r]) }
             if voice && (tts == nil || ttsFinalReceived) { startTTS(language: language) }
             if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
-            try await streamAnswer(model: model, version: version, messages: f, tools: tools, toolChoice: "none", reasoning: reasoning,
-                                   maxTokens: maxTokens, voice: voice, pid: pid, language: language)
+            try await streamAnswer(model: model, version: version, messages: f, tools: tools, toolChoice: choice, reasoning: reasoning,
+                                   maxTokens: maxTokens, voice: voice, pid: pid, language: language, hop: hop + 1)
         }
 
         if first.name == "web_search" {
@@ -647,6 +678,22 @@ final class AppModel: ObservableObject {
             }
         }
         var confirmed = false
+        if let line = notSetReply(call) {
+            Log.info("refused model press: \(line)")
+            if voice && (tts == nil || ttsFinalReceived) { startTTS(language: language) }
+            appendAnswer(line, voice: voice)
+            if voice { flushTTS() }
+            return
+        }
+        // The model may only press a consequential control (Block, Delete, Send) the ask actually names;
+        // it once reached for Block while trying to unfollow. No card, no press: it hears why instead.
+        if call.name == "press", call.needsConfirm, let c = Controls.latest.value[Controls.id(call)],
+           let ask = chats.indices.contains(chatIndex) ? chats[chatIndex].turns.last?.ask : nil, !Reflex.related(ask, c.label) {
+            Log.info("refused model press of “\(c.label)”: not what was asked")
+            actionFailedThisTurn = true
+            try await followUp([call], ["error: not pressed. “\(c.label)” is not what the user asked for, and it can't be undone. Say in one short sentence that you couldn't find how to do what they asked here."], maxTokens: 120)
+            return
+        }
         if call.needsConfirm {
             if voice { flushTTS() }
             addStep("Waiting for you to confirm")
@@ -676,12 +723,23 @@ final class AppModel: ObservableObject {
         }
         Log.time("tool \(call.name) ×\(batch.count) ran → \(results.joined(separator: ", ").prefix(120))", since: tr)
         if call.name == "insert_text", !results[0].hasPrefix("error") { hide(); return }
+        actionFailedThisTurn = results.contains { $0.hasPrefix("error") || $0.hasSuffix(Controls.unchangedMarker) }
+        // So a later "close them", "undo that" or "open it again" can see what this turn actually did.
         if call.name == "open_url" {
-            // So "close them" next turn knows exactly which tabs these were.
-            noteOnTurn("Quicky opened these tabs: " + batch.map { $0.string("url") }.joined(separator: " "))
+            noteOnTurn("Quicky did: opened tabs " + batch.map { $0.string("url") }.joined(separator: " "))
+        } else if !results[0].hasPrefix("error") {
+            noteOnTurn("Quicky did: \(call.name) \(call.rawArguments.prefix(200)) → \(results[0].prefix(120))")
         }
 
-        // Success on a plain action needs no second model trip: say it from a template right away.
+        // The press opened a menu or dialog (Following → Unfollow): one more model step with what opened,
+        // tools allowed, so it can press the item the ask was really about. At most three steps.
+        if call.name == "press", Controls.needsNextStep(results[0]), hop < 3 {
+            Log.time("press not done yet (\(results[0].contains(Controls.openedMarker) ? "opened" : results[0].contains(Controls.closedMarker) ? "closed" : "no change")); step \(hop + 2)", since: t0)
+            try await followUp(batch, results, maxTokens: 300, choice: "auto")
+            return
+        }
+
+        // Success on a plain action needs no second model trip and no words: the screen already shows it.
         if let reply = Self.localReply(batch, results: results, saidAlready: !assistantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                                        language: language) {
             Log.time("tool \(call.name) done, local reply (no follow-up model call)", since: t0)
@@ -696,27 +754,32 @@ final class AppModel: ObservableObject {
         try await followUp(batch, results, maxTokens: 300)
     }
 
+    /// "Unfollow" while the page shows Follow: the line to say instead of pressing.
+    private func notSetReply(_ call: ToolCall) -> String? {
+        guard call.name == "press", let c = Controls.latest.value[Controls.id(call)],
+              let ask = chats.indices.contains(chatIndex) ? chats[chatIndex].turns.last?.ask : nil else { return nil }
+        return Controls.notSetReply(ask: ask, label: c.label)
+    }
+
     /// Tools that may start before the model finishes: no confirm, nothing to undo, nothing that needs the panel.
     nonisolated static func runsEarly(_ call: ToolCall) -> Bool {
         guard !call.needsConfirm else { return false }
-        return ["web_search", "open_url", "open_app", "press_shortcut", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
+        return ["web_search", "open_url", "open_app", "press_shortcut", "press", "type_text", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
     }
 
-    /// The one-line reply after a tool that worked, or nil to ask the model (errors, other languages, tools
-    /// whose result needs explaining). "" means the model already said its lead-in, so say nothing more.
+    /// What to say after a tool that worked, or nil to let the model explain (errors, a press that changed
+    /// nothing, tools whose result needs words). "" means say nothing: the change is right there on screen,
+    /// and "Pressed Follow" would only read the UI back. Data the user can't see (a file moved, an event
+    /// added) gets one short line.
     nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?) -> String? {
-        guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") }) else { return nil }
+        guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") || Controls.needsNextStep($0) }) else { return nil }
+        if ["open_url", "open_app", "press_shortcut", "press", "type_text", "reveal_or_open_file"].contains(first.name) {
+            return ""
+        }
         if let l = language, !l.hasPrefix("en") { return l == "hi-IN" && !saidAlready ? "Ho gaya." : (saidAlready ? "" : nil) }
         if saidAlready { return "" }
         switch first.name {
-        case "open_url":
-            if calls.count > 1 { return "Opened \(calls.count) tabs." }
-            let host = PageLink.host(first.string("url"))
-            return host.isEmpty ? "Opened it." : "Opened \(host)."
-        case "open_app": return "Opened \(first.string("name"))."
-        case "press_shortcut": return Reflex.reply(forKeys: first.string("keys")) ?? "Done."
         case "copy_to_clipboard": return "Copied."
-        case "reveal_or_open_file": return first.arguments["reveal"] as? Bool == true ? "There it is in Finder." : "Opened it."
         case "create_event": return "Added to your calendar."
         case "create_reminder": return "Reminder set."
         case "move_files":
@@ -740,8 +803,9 @@ final class AppModel: ObservableObject {
             return false
         }
         toolRanThisTurn = true
-        if r.calls[0].name == "open_url" { noteOnTurn("Quicky opened these tabs: " + r.calls.map { $0.string("url") }.joined(separator: " ")) }
-        appendAnswer(r.reply, voice: voice)
+        let c = r.calls[0]
+        noteOnTurn(c.name == "open_url" ? "Quicky did: opened tabs " + c.string("url") : "Quicky did: \(c.name) \(c.arguments) → \(results[0].prefix(120))")
+        // The screen shows it happened; a spoken "Closed." only reads the action back.
         if voice { flushTTS() }
         return true
     }
@@ -752,7 +816,10 @@ final class AppModel: ObservableObject {
         pendingTool = tool
         overlay = .confirm
         if !visible { show() }
-        return await withCheckedContinuation { confirmContinuation = $0 }
+        Log.info("confirm shown: \(tool.confirmTitle)")
+        let ok = await withCheckedContinuation { confirmContinuation = $0 }
+        Log.info("confirm \(ok ? "approved" : "declined")")
+        return ok
     }
 
     private func askConfirm(computer: ComputerUser.Handoff) async -> Bool {
