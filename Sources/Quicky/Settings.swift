@@ -78,7 +78,7 @@ struct GeneralSettings: View {
             }
             Section("Speaking") {
                 Picker(selection: $voice) {
-                    Text("Sarvam Bulbul v3").tag(TTS.Provider.sarvam.rawValue)
+                    Text("Sarvam Bulbul v4 Flash").tag(TTS.Provider.sarvam.rawValue)
                     Text("ElevenLabs v4 Turbo").tag(TTS.Provider.elevenLabsTurbo.rawValue)
                     Text("ElevenLabs v4").tag(TTS.Provider.elevenLabs.rawValue)
                 } label: {

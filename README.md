@@ -29,7 +29,7 @@ Keys are never logged or shown back.
 | `OPENAI_API_KEY` | computer use (optional; without it those asks get a normal answer) |
 
 Optional overrides (environment or `~/.zshrc`): `ASSISTANT_STT_MODEL` (saaras:v4), `ASSISTANT_VISION_MODEL` (gemma4),
-`ASSISTANT_DEEP_MODEL` (sarvam-105b), `ASSISTANT_TTS_MODEL` (bulbul:v3), `ASSISTANT_TTS_SPEAKER` (shubh),
+`ASSISTANT_DEEP_MODEL` (sarvam-105b), `ASSISTANT_TTS_MODEL` (bulbul:v4-flash), `ASSISTANT_TTS_SPEAKER` (sarika_hi_conversation),
 `ASSISTANT_TTS_PACE` (1.0; Settings → Voice speed wins), `ASSISTANT_CUA_MODEL` (gpt-6-astra), `ASSISTANT_CUA_FALLBACK_MODEL` (gpt-6.1-sol),
 `ASSISTANT_SIGN_IDENTITY` (codesign identity for make-app.sh).
 
