@@ -67,19 +67,24 @@ enum Music: QuickyExtension {
         async let it = iTunes.search(query, kind: kind)
         let (y, i) = await (yt, it)
         Log.time("music_search ytmusic \(y.count), itunes \(i.count)", since: t0)
-        // YouTube Music ranks better for loose spoken queries; iTunes adds clean dates and the Apple link.
-        var out: [String] = []
-        for h in y.prefix(5) {
-            var h = h
+        // YouTube Music finds more (loose spoken queries, OSTs, unofficial uploads) but often ranks covers first;
+        // iTunes lists originals. So: rows both agree on first, then iTunes' top pick, then the rest of YouTube Music.
+        var agreed: [Hit] = [], others: [Hit] = []
+        for var h in y.prefix(10) {
             if let m = i.first(where: { same($0, h) }) {
                 if h.year.isEmpty { h.year = m.year }
                 if h.album.isEmpty { h.album = m.album }
                 h.extra = [m.extra, m.link].filter { !$0.isEmpty }.joined(separator: " · ")
                 h.source += "+itunes"
-            }
-            out.append(h.line)
+                agreed.append(h)
+            } else { others.append(h) }
         }
-        for h in i.prefix(5) where !y.contains(where: { same($0, h) }) && out.count < 7 { out.append(h.line) }
+        let itunesOnly = i.filter { m in !y.prefix(10).contains { same(m, $0) } }
+        var out = agreed.map(\.line)
+        if let top = itunesOnly.first { out.append(top.line) }
+        out += others.map(\.line)
+        out += itunesOnly.dropFirst().map(\.line)
+        out = Array(out.prefix(6))
         return out.isEmpty ? "No results for “\(query)”." : out.joined(separator: "\n")
     }
 

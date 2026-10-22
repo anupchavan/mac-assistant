@@ -84,15 +84,17 @@ final class ExtensionPicker {
     func pick(final ask: String, app: String, url: String, wait: TimeInterval) async -> Set<String> {
         let t0 = Date()
         var verdict = latest.flatMap { Self.close($0.text, ask) ? $0 : nil }
-        if verdict == nil, Self.key != nil {
+        let cued = Extensions.cueMatch(ask)
+        // A cue word ("lyrics", "song") is enough: don't wait on Jev for what the words already say.
+        if verdict == nil, cued.isEmpty, Self.key != nil {
             if inFlight == nil || !Self.close(inFlight!.text, ask) { self.ask(ask, app: app, url: url) }
             if let f = inFlight { verdict = await Self.value(of: f.task, within: wait) }
         }
-        var ids = verdict?.ids ?? Extensions.cueMatch(ask)
+        var ids = (verdict?.ids ?? []).union(cued)
         let sticky = recent.filter { Date().timeIntervalSince($0.value) < 120 }.map(\.key)
         ids.formUnion(sticky)
         let how = verdict.map { "jev \($0.ms) ms, " + $0.scores.map { "\($0.key) \(String(format: "%.2f", $0.value))" }.sorted().joined(separator: " ") }
-            ?? (Self.key == nil ? "cues (no TYPESAFE_API_KEY)" : "cues (jev late)")
+            ?? (Self.key == nil ? "cues (no TYPESAFE_API_KEY)" : cued.isEmpty ? "cues (jev late)" : "cues")
         Log.info("extensions: \(ids.isEmpty ? "none" : ids.sorted().joined(separator: ", ")) · \(how)\(sticky.isEmpty ? "" : " · kept \(sticky.joined(separator: ", "))") · waited \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
         latest = nil; inFlight = nil; generation += 1
         previousAsk = ask
