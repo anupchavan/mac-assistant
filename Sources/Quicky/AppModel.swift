@@ -476,12 +476,18 @@ final class AppModel: ObservableObject {
     private func historyMessages() -> [[String: Any]] {
         let previous = chats[chatIndex].turns.dropLast().suffix(6)
         var out: [[String: Any]] = []
-        for t in previous where !t.answer.isEmpty || t.contextNote != nil {
+        for t in previous {
+            // A silent turn is replayed only if it did something, and then as what it did. A made-up line
+            // like "(did it, said nothing)" gets copied back word for word as a reply.
+            let did = (t.contextNote ?? "").split(separator: "\n").filter { $0.hasPrefix("Quicky did: ") }
+                .map { String($0.dropFirst("Quicky did: ".count)) }.joined(separator: "; ")
+            let reply = t.answer.isEmpty ? did : t.rememberedAnswer
+            if reply.isEmpty { continue }
             // When and where each earlier ask happened, so "search for X" four seconds after "open YouTube"
             // reads as a follow-up on that screen, not a fresh question.
             let when = "[\(Self.ago(t.at)) in \(t.appLabel.isEmpty ? "another app" : t.appLabel)]"
             out.append(["role": "user", "content": "\(when) \(t.ask)" + (t.contextNote.map { "\n\n(\($0))" } ?? "")])
-            out.append(["role": "assistant", "content": t.answer.isEmpty ? "(did it, said nothing)" : t.rememberedAnswer])
+            out.append(["role": "assistant", "content": reply])
         }
         return out
     }
