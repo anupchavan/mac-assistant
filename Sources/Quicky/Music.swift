@@ -85,7 +85,19 @@ enum Music: QuickyExtension {
 
     static func same(_ a: Hit, _ b: Hit) -> Bool {
         func key(_ s: String) -> String { s.lowercased().components(separatedBy: CharacterSet(charactersIn: "([-–|")).first?.filter { $0.isLetter || $0.isNumber } ?? "" }
-        return key(a.title) == key(b.title) && !key(a.title).isEmpty
+        // "紅蓮華 - Gurenge" and "Gurenge" are one title: compare letters only, either containing the other.
+        func flat(_ s: String) -> String { s.lowercased().filter { $0.isLetter || $0.isNumber } }
+        let (x, y) = (flat(a.title), flat(b.title))
+        guard key(a.title) == key(b.title) || (min(x.count, y.count) >= 4 && (x.contains(y) || y.contains(x))),
+              !key(a.title).isEmpty else { return false }
+        // Same title isn't the same recording: covers share it. Need a shared artist name and, when both
+        // lengths are known, lengths within 5 s.
+        func names(_ s: String) -> Set<String> {
+            Set(s.lowercased().components(separatedBy: CharacterSet(charactersIn: ",&·")).map { $0.filter { $0.isLetter || $0.isNumber } }.filter { !$0.isEmpty })
+        }
+        guard !names(a.artists).isDisjoint(with: names(b.artists)) else { return false }
+        if let x = a.seconds, let y = b.seconds, abs(x - y) > 5 { return false }
+        return true
     }
 
     static func album(_ query: String) async -> String {
@@ -129,7 +141,9 @@ enum Music: QuickyExtension {
     }
 
     static func credits(title: String, artist: String) async -> String {
-        let q = "recording:\"\(title)\"" + (artist.isEmpty ? "" : " AND artist:\"\(artist)\"")
+        // Artist as loose words, not a quoted phrase: "A.R. Rahman" is "A. R. Rahman" in MusicBrainz.
+        let words = String(artist.map { $0.isLetter || $0.isNumber ? $0 : " " }).split(separator: " ").joined(separator: " ")
+        let q = "recording:\"\(title)\"" + (words.isEmpty ? "" : " AND artist:(\(words))")
         guard let r = await mb("recording?limit=1&query=\(HTTP.enc(q))"),
               let rec = (r["recordings"] as? [[String: Any]])?.first, let rid = rec["id"] as? String,
               let full = await mb("recording/\(rid)?inc=artist-credits+artist-rels+work-rels+releases") else {
