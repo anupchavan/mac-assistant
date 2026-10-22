@@ -295,6 +295,7 @@ final class AppModel: ObservableObject {
         mic.stop()
         stt?.close()
         stt = nil
+        speechFilter = nil
         listening = false
         handsFree = false
         partial = ""
@@ -324,9 +325,11 @@ final class AppModel: ObservableObject {
         listening = false
         handsFree = false
         stt = nil
-        // Nothing was said: no STT call, no turn. Typing can sound loud enough; the classifier knows better.
-        if duration < 0.3 || !gate.heardSpeech || speechFilter?.heardSpeech == false {
-            Log.info(String(format: "no speech (voiced %.0f ms, floor %.3f, classifier %@); discarded", gate.voicedMs, gate.noiseFloor, speechFilter?.heardSpeech == true ? "speech" : "none"))
+        // Nothing was said: no STT call, no turn. The classifier decides; loudness can't tell typing from talking.
+        let spoke = speechFilter?.finish() ?? gate.heardSpeech
+        speechFilter = nil
+        if duration < 0.3 || !spoke {
+            Log.info(String(format: "no speech (voiced %.0f ms, floor %.3f); discarded", gate.voicedMs, gate.noiseFloor))
             s.close(); partial = ""
             if !shownBeforeHold && turns.isEmpty { hide() }
             return

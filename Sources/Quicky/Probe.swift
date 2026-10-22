@@ -569,6 +569,7 @@ enum Probe {
             print("speak now for \(Int(secs))s")
             try await Task.sleep(nanoseconds: UInt64(secs * 1e9))
             mic.stop()
+            print("classifier heard speech: \(filter.finish())")
             let t0 = Date()
             let (text, lang) = await stt.finish(timeout: 3)
             print(String(format: "final (%@) after %.0f ms: %@", lang ?? "?", Date().timeIntervalSince(t0) * 1000, text))
