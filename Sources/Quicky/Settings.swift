@@ -136,7 +136,9 @@ struct GeneralSettings: View {
         }
         guard answer.hasPrefix("gemini") else { return "Sarvam, India servers. Screenshots go to gemma4." }
         return hasGemini
-            ? "Vertex AI in Mumbai, thinking minimal. Also reads screenshots. Falls back to Sarvam if it fails."
+            ? (Gemini.noMinimal.contains(answer)
+                ? "Vertex AI, Mumbai if it serves it, else global. Thinking low. Also reads screenshots. Falls back to Sarvam if it fails."
+                : "Vertex AI in Mumbai, thinking minimal. Also reads screenshots. Falls back to Sarvam if it fails.")
             : "Add a Google Cloud key and project ID in API Keys to use it. Sarvam until then."
     }
 

@@ -9,6 +9,7 @@ enum Gemini {
         ("sarvam-105b", "Sarvam 105B"),
         ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
         ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+        ("gemini-3.8-flash", "Gemini 3.8 Flash (Vertex)"),
         ("aistudio/gemini-3.8-flash", "Gemini 3.8 Flash (AI Studio)"),
         ("claude-haiku-5-5", "Claude Haiku 5.5"),
         ("deepseek-flash", "DeepSeek V4.1 Flash"),
@@ -34,6 +35,17 @@ enum Gemini {
     }
     static var available: Bool { Keys.vertex != nil && project != nil }
 
+    /// Vertex models Mumbai turned out not to serve (404), so they go straight to the global endpoint.
+    private static let globalLock = NSLock()
+    private static var globalOnly: Set<String> = []
+    static func markGlobal(_ model: String) { globalLock.lock(); globalOnly.insert(model); globalLock.unlock() }
+    static func locations(for model: String) -> [String] {
+        let loc = location
+        globalLock.lock(); defer { globalLock.unlock() }
+        if loc == "global" || globalOnly.contains(model) { return ["global"] }
+        return [loc, "global"]
+    }
+
     /// The model that answers. Order: ASSISTANT_DEEP_MODEL in the process environment (so a probe can
     /// compare models), then the Settings picker, then ASSISTANT_DEEP_MODEL in ~/.zshrc, then sarvam-105b.
     static var answerModel: String {
@@ -58,36 +70,47 @@ enum Gemini {
         AsyncThrowingStream { cont in
             let task = Task {
                 do {
-                    let url: URL
-                    let key: String
+                    let payload = try JSONSerialization.data(withJSONObject: body(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
+                                                                               reasoning: reasoning, maxTokens: maxTokens,
+                                                                               temperature: temperature, json: json))
+                    func request(_ url: URL, key: String) -> URLRequest {
+                        var req = URLRequest(url: url)
+                        req.httpMethod = "POST"
+                        req.timeoutInterval = 60
+                        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                        req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
+                        req.httpBody = payload
+                        return req
+                    }
+                    var attempts: [(URL, String)] = []
                     if model.hasPrefix("aistudio/") {
                         guard let k = Keys.aiStudio else { throw APIError(status: 401, body: "Add a Gemini API key in Settings → API Keys.") }
-                        key = k
-                        url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model.dropFirst("aistudio/".count)):streamGenerateContent?alt=sse")!
+                        attempts = [(URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model.dropFirst("aistudio/".count)):streamGenerateContent?alt=sse")!, k)]
                     } else {
                         guard let k = Keys.vertex, let project else {
                             throw APIError(status: 401, body: "Add a Google Cloud key and project ID in Settings → API Keys.")
                         }
-                        key = k
-                        let loc = location
-                        let host = loc == "global" ? "aiplatform.googleapis.com" : "\(loc)-aiplatform.googleapis.com"
-                        url = URL(string: "https://\(host)/v1/projects/\(project)/locations/\(loc)/publishers/google/models/\(model):streamGenerateContent?alt=sse")!
+                        // Mumbai first; a model Mumbai doesn't serve (404) goes to the global endpoint, remembered per model.
+                        for loc in locations(for: model) {
+                            let host = loc == "global" ? "aiplatform.googleapis.com" : "\(loc)-aiplatform.googleapis.com"
+                            attempts.append((URL(string: "https://\(host)/v1/projects/\(project)/locations/\(loc)/publishers/google/models/\(model):streamGenerateContent?alt=sse")!, k))
+                        }
                     }
-                    var req = URLRequest(url: url)
-                    req.httpMethod = "POST"
-                    req.timeoutInterval = 60
-                    req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-                    req.httpBody = try JSONSerialization.data(withJSONObject: body(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
-                                                                                   reasoning: reasoning, maxTokens: maxTokens,
-                                                                                   temperature: temperature, json: json))
-                    let (bytes, resp) = try await URLSession.shared.bytes(for: req)
-                    let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
-                    guard (200..<300).contains(status) else {
+                    var stream: URLSession.AsyncBytes?
+                    for (n, (url, key)) in attempts.enumerated() {
+                        let (bytes, resp) = try await URLSession.shared.bytes(for: request(url, key: key))
+                        let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
+                        if (200..<300).contains(status) { stream = bytes; break }
                         var text = ""
                         for try await line in bytes.lines { text += line; if text.count > 2000 { break } }
+                        if status == 404, n + 1 < attempts.count {
+                            Log.info("\(model) not served at \(url.host ?? ""); trying the global endpoint")
+                            markGlobal(model)
+                            continue
+                        }
                         throw APIError(status: status, body: text)
                     }
+                    guard let bytes = stream else { throw APIError(status: 404, body: "\(model) isn't available on Vertex.") }
                     var callIndex = 0
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
@@ -124,7 +147,7 @@ enum Gemini {
     // MARK: - OpenAI-style request → Gemini request
 
     /// Gemini 3.8 Flash rejects MINIMAL (400, 22 Oct); LOW is its floor.
-    static let noMinimal: Set<String> = ["aistudio/gemini-3.8-flash"]
+    static let noMinimal: Set<String> = ["aistudio/gemini-3.8-flash", "gemini-3.8-flash"]
     static func thinkingLevel(model: String, reasoning: String?) -> String {
         let level = reasoning?.uppercased() ?? "MINIMAL"
         return level == "MINIMAL" && noMinimal.contains(model) ? "LOW" : level
