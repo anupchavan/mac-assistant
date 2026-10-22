@@ -63,15 +63,24 @@ enum Controls {
                     queue += kids.prefix(60)
                 }
             }
-            // Web content: buttons and other controls currently on screen.
+            // Web content: buttons, text fields and other controls on screen. Each search key catches things
+            // the others miss (a div with role=button in a modal is a button but not always a "control"),
+            // so take all of them; duplicates collapse below. A key may list several element types at once.
             for web in webAreas.prefix(1) where Date() < deadline {
                 AXUIElementSetMessagingTimeout(web, 0.15)
-                for key in ["AXControlSearchKey", "AXButtonSearchKey"] {
-                    let predicate: [String: Any] = ["AXSearchKey": key, "AXResultsLimit": limit, "AXDirection": "AXDirectionNext",
-                                                    "AXVisibleOnly": true, "AXImmediateDescendantsOnly": false]
-                    var out: CFTypeRef?
-                    if AXUIElementCopyParameterizedAttributeValue(web, "AXUIElementsForSearchPredicate" as CFString, predicate as CFDictionary, &out) == .success,
-                       let els = out as? [AXUIElement], !els.isEmpty { found += els; break }
+                let predicate: [String: Any] = ["AXSearchKey": ["AXControlSearchKey", "AXButtonSearchKey", "AXTextFieldSearchKey"],
+                                                "AXResultsLimit": limit * 2, "AXDirection": "AXDirectionNext",
+                                                "AXVisibleOnly": true, "AXImmediateDescendantsOnly": false]
+                var out: CFTypeRef?
+                if AXUIElementCopyParameterizedAttributeValue(web, "AXUIElementsForSearchPredicate" as CFString, predicate as CFDictionary, &out) == .success,
+                   let els = out as? [AXUIElement] { found += els }
+                else {
+                    for key in ["AXControlSearchKey", "AXButtonSearchKey", "AXTextFieldSearchKey"] where Date() < deadline {
+                        var one = predicate; one["AXSearchKey"] = key
+                        var o: CFTypeRef?
+                        if AXUIElementCopyParameterizedAttributeValue(web, "AXUIElementsForSearchPredicate" as CFString, one as CFDictionary, &o) == .success,
+                           let els = o as? [AXUIElement] { found += els }
+                    }
                 }
             }
 
@@ -103,7 +112,7 @@ enum Controls {
                 label = String(label.replacingOccurrences(of: "\n", with: " ").prefix(60))
                 var state = ""
                 if ["checkbox", "switch", "toggle", "radio"].contains(role), let n = v[3] as? NSNumber { state = n.intValue == 0 ? "off" : "on" }
-                guard keys.insert("\(kind)|\(label)").inserted else { continue }
+                guard keys.insert("\(kind)|\(label)|\(frame.map { "\(Int($0.minX)),\(Int($0.minY))" } ?? "")").inserted else { continue }
                 controls.append(Control(id: controls.count + 1, role: kind, label: label, state: state, element: el, frame: frame))
             }
             latest.value = Dictionary(uniqueKeysWithValues: controls.map { ($0.id, $0) })

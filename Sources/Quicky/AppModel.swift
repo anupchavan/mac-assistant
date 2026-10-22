@@ -706,7 +706,7 @@ final class AppModel: ObservableObject {
 
         // Success on a plain action needs no second model trip and no words: the screen already shows it.
         if let reply = Self.localReply(batch, results: results, saidAlready: !assistantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                                       language: language) {
+                                       language: language, ask: chats.indices.contains(chatIndex) ? chats[chatIndex].turns.last?.ask : nil) {
             Log.time("tool \(call.name) done, local reply (no follow-up model call)", since: t0)
             if !reply.isEmpty {
                 if voice && (tts == nil || ttsFinalReceived || confirmed) { startTTS(language: language) }
@@ -729,12 +729,15 @@ final class AppModel: ObservableObject {
     /// nothing, tools whose result needs words). "" means say nothing: the change is right there on screen,
     /// and "Pressed Follow" would only read the UI back. Data the user can't see (a file moved, an event
     /// added) gets one short line.
-    nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?) -> String? {
+    nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?, ask: String? = nil) -> String? {
         guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") || $0.hasSuffix(Controls.unchangedMarker) }) else { return nil }
         if ["open_url", "open_app", "press_shortcut", "press", "type_text", "reveal_or_open_file"].contains(first.name) {
             // An unnamed shortcut is the one visible action worth naming: it may have been a wrong guess.
-            if first.name == "press_shortcut", Reflex.reply(forKeys: first.string("keys")) == nil, !saidAlready {
-                return "Pressed \(Tools.symbols(first.string("keys")))."
+            if first.name == "press_shortcut", !saidAlready {
+                let keys = first.string("keys")
+                guard let meaning = Reflex.reply(forKeys: keys) else { return "Pressed \(Tools.symbols(keys))." }
+                // "unfollow them" → cmd+t is a wrong guess; say what it did so it isn't silent.
+                if let ask, !Reflex.related(ask, meaning) { return "That pressed \(Tools.symbols(keys)), \(meaning.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")))." }
             }
             return ""
         }

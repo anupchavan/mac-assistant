@@ -304,3 +304,14 @@ final class TemporalityTests: XCTestCase {
         XCTAssertEqual(AppModel.localReply([move], results: ["moved 2 files"], saidAlready: false, language: nil), "Moved 2 files.")
     }
 }
+
+final class WrongShortcutTests: XCTestCase {
+    func testAWrongGuessIsNamed() {
+        let t = ToolCall(id: "t", name: "press_shortcut", arguments: ["keys": "cmd+t"], rawArguments: "")
+        XCTAssertEqual(AppModel.localReply([t], results: ["pressed"], saidAlready: false, language: nil, ask: "Unfollow them."), "That pressed ⌘T, new tab.")
+        XCTAssertEqual(AppModel.localReply([t], results: ["pressed"], saidAlready: false, language: nil, ask: "open a new tab"), "")
+        let w = ToolCall(id: "w", name: "press_shortcut", arguments: ["keys": "cmd+w"], rawArguments: "")
+        XCTAssertEqual(AppModel.localReply([w], results: ["pressed"], saidAlready: false, language: nil, ask: "isko band karo"), "")
+        XCTAssertEqual(AppModel.localReply([w], results: ["pressed"], saidAlready: false, language: nil, ask: "close this"), "")
+    }
+}
