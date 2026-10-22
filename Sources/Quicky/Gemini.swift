@@ -66,7 +66,7 @@ enum Gemini {
                     req.timeoutInterval = 60
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-                    req.httpBody = try JSONSerialization.data(withJSONObject: body(messages: messages, tools: tools, toolChoice: toolChoice,
+                    req.httpBody = try JSONSerialization.data(withJSONObject: body(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
                                                                                    reasoning: reasoning, maxTokens: maxTokens,
                                                                                    temperature: temperature, json: json))
                     let (bytes, resp) = try await URLSession.shared.bytes(for: req)
@@ -111,7 +111,14 @@ enum Gemini {
 
     // MARK: - OpenAI-style request → Gemini request
 
-    static func body(messages: [[String: Any]], tools: [[String: Any]]?, toolChoice: String, reasoning: String?,
+    /// Gemini 3.8 Flash rejects MINIMAL (400, 22 Oct); LOW is its floor.
+    static let noMinimal: Set<String> = ["aistudio/gemini-3.8-flash"]
+    static func thinkingLevel(model: String, reasoning: String?) -> String {
+        let level = reasoning?.uppercased() ?? "MINIMAL"
+        return level == "MINIMAL" && noMinimal.contains(model) ? "LOW" : level
+    }
+
+    static func body(model: String = "", messages: [[String: Any]], tools: [[String: Any]]?, toolChoice: String, reasoning: String?,
                      maxTokens: Int, temperature: Double?, json: Bool) -> [String: Any] {
         var system: [String] = []
         var contents: [[String: Any]] = []
@@ -152,7 +159,7 @@ enum Gemini {
             }
         }
         var gen: [String: Any] = ["maxOutputTokens": maxTokens,
-                                  "thinkingConfig": ["thinkingLevel": reasoning == nil ? "MINIMAL" : reasoning!.uppercased()]]
+                                  "thinkingConfig": ["thinkingLevel": thinkingLevel(model: model, reasoning: reasoning)]]
         if let temperature { gen["temperature"] = temperature }
         if json { gen["responseMimeType"] = "application/json" }
         var out: [String: Any] = ["contents": contents, "generationConfig": gen]
