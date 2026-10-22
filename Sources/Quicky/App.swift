@@ -6,6 +6,9 @@ import ApplicationServices
 enum Main {
     static func main() {
         let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--extension") {
+            exit(ExtensionHost.cli(Array(args.dropFirst(i + 1))))
+        }
         if let i = args.firstIndex(of: "--probe") {
             Probe.run(Array(args.dropFirst(i + 1)))
             return

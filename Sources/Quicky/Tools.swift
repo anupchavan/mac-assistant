@@ -16,6 +16,7 @@ struct ToolCall: Identifiable {
 
     /// Needs a confirm card before running (changes or creates data, or a shortcut that can lose work).
     var needsConfirm: Bool {
+        if let e = ExtensionHost.effect(of: name) { return e == .write || e == .external }
         if name == "press_shortcut" { return Tools.isDestructive(shortcut: string("keys")) }
         if name == "press" { return Controls.latest.value[Controls.id(self)]?.consequential ?? false }
         // Typing into a search box is harmless; typing into anything else and sending it (a message, a form) asks first.
@@ -38,7 +39,10 @@ struct ToolCall: Identifiable {
         case "press_shortcut": return "Press \(Tools.symbols(string("keys")))"
         case "press": return "Press \(Controls.latest.value[Controls.id(self)]?.label ?? "It")"
         case "type_text": return "Send"
-        default: return "Run"
+        default:
+            // An extension tool: its own name as the verb ("telegram_send" → "Send").
+            if let t = ExtensionHost.tool(name)?.1 { return t.name.split(separator: "_").first.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Run" }
+            return "Run"
         }
     }
 
@@ -57,7 +61,11 @@ struct ToolCall: Identifiable {
         case "press_shortcut": return "Press \(Tools.symbols(string("keys")))\(string("app").isEmpty ? "" : " in \(string("app"))")"
         case "press": return "Press “\(Controls.latest.value[Controls.id(self)]?.label ?? "that")”"
         case "type_text": return "Type into “\(Controls.latest.value[Controls.id(self)]?.label ?? "the field")” and send"
-        default: return name
+        default:
+            if case let (m, t)? = ExtensionHost.tool(name) {
+                return "\(m.name): \(t.description.components(separatedBy: ". ").first ?? t.name)"
+            }
+            return name
         }
     }
 
@@ -78,7 +86,13 @@ struct ToolCall: Identifiable {
                 let range = s == nil && e == nil ? "whole" : "\(t(s ?? 0))–\(e.map(t) ?? "end")"
                 return "\(name) (\(range))"
             }.joined(separator: " → ")
-        default: return string("input")
+        default:
+            // An extension tool: exactly what it will act on, so a confirm never hides the resolved item.
+            if ExtensionHost.tool(name) != nil {
+                return arguments.sorted { $0.key < $1.key }.map { "\($0.key): \($0.value is String ? $0.value as! String : ExtensionHost.jsonValue($0.value))" }
+                    .joined(separator: " · ").prefix(240).description
+            }
+            return string("input")
         }
     }
 
@@ -86,6 +100,12 @@ struct ToolCall: Identifiable {
     var statusText: String {
         switch name {
         case "web_search": return "Searching the web for “\(string("query"))”"
+        case "run":
+            // The tools the program calls, in order: "Music search → Telegram download".
+            let p = string("program")
+            let names = ExtensionHost.enabled.flatMap { $0.tools }.compactMap { t in p.range(of: t.fullName + "(").map { ($0.lowerBound, "\(t.fullName)") } }
+                .sorted { $0.0 < $1.0 }.map { $0.1.replacingOccurrences(of: "_", with: " ") }
+            return names.isEmpty ? "Working on it" : names.map { $0.prefix(1).uppercased() + $0.dropFirst() }.joined(separator: " → ")
         case "open_url":
             let list = urlList
             return list.count > 1 ? "Opening \(list.count) links" : "Opening \(URL(string: list.first ?? "")?.host ?? "the link")"
@@ -111,15 +131,17 @@ struct ToolCall: Identifiable {
 }
 
 enum Tools {
-    static let declarations: [[String: Any]] = {
+    /// Every core tool: the built-in ones plus core extensions that are always on (web search).
+    /// Picked extensions are added per turn (ExtensionHost.declarations).
+    static var declarations: [[String: Any]] { builtIn + ExtensionHost.declarations(for: []) }
+
+    static let builtIn: [[String: Any]] = {
         func fn(_ name: String, _ desc: String, _ props: [String: Any], _ req: [String]) -> [String: Any] {
             ["type": "function", "function": ["name": name, "description": desc,
                                               "parameters": ["type": "object", "properties": props, "required": req]]]
         }
         let s: [String: Any] = ["type": "string"]
         return [
-            fn("web_search", "Search the web. Use it for anything current or that you aren't sure of: news, launches and release dates, prices, scores, weather, recent versions, who holds a role now. Returns dated excerpts.",
-               ["query": ["type": "string", "description": "A short search query in English, with names spelled out"]], ["query"]),
             fn("open_url", "Open one or more web pages in the browser, one tab each (up to 5). Use exact URLs from PAGE_LINKS, or ones you know.",
                ["urls": ["type": "array", "items": s, "maxItems": 5]], ["urls"]),
             fn("close_tabs", "Close browser tabs by URL, in any window. Use it for \"close them\" or \"close the Instagram tab\": pass the URLs of the tabs (from the history of what you opened, or BROWSER). A URL also matches pages under it. Returns which tabs it actually closed.",
@@ -306,7 +328,8 @@ enum Tools {
                 p.waitUntilExit()
                 return p.terminationStatus == 0 ? "ran" : "error: shortcut failed"
             default:
-                return await Extensions.run(call) ?? "error: unknown tool"
+                if call.name == "run" { return await Composer.run(call.string("program")) }
+                return await ExtensionHost.run(call) ?? "error: unknown tool"
             }
         } catch {
             return "error: \(error.localizedDescription)"
