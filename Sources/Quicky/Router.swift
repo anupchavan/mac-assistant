@@ -19,6 +19,13 @@ enum Router {
     /// Things our native tools already do; those never go to computer use.
     static let nativeCovers = #"(?i)\b(calendar|reminder|remind|open (the )?(url|link|app|file)|move (these|this|the) files?|clipboard|copy)\b"#
 
+    /// Asks that point at the screen ("this", "summarise", "isko", "what's the error"). Only these send the
+    /// screenshot to the vision model; everything else is a general question for the main model, which
+    /// still gets the accessibility text and answers from what it knows.
+    static let screenCues = #"(?i)(\b(this|that|these|those|here|above|below|screen|page|tab|window|selected|selection|highlighted|article|email|mail|message|thread|doc|document|pdf|image|picture|photo|screenshot|chart|graph|table|diagram|code|error|warning|summari[sz]e|summary|tl;?dr|translate|meaning|read (it|this|that|out)|isko|isse|isme|ismein|iska|iski|iske|yeh|ye|yaha|yahan|wo wala|woh wala)\b|यह|ये|इस|इसको|इसे|यहाँ|ఈ|ఇది|దీని)"#
+
+    static func looksAtScreen(_ ask: String) -> Bool { matches(ask, screenCues) }
+
     static func matches(_ t: String, _ pattern: String) -> Bool {
         t.range(of: pattern, options: .regularExpression) != nil
     }

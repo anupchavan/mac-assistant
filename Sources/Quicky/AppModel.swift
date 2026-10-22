@@ -438,7 +438,11 @@ final class AppModel: ObservableObject {
         let mode = voice ? "voice" : "typed"
         let fastModel = Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4")
         let deepModel = Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b")
-        let useVision = visionAvailable && ctx.screenshot != nil
+        // Only asks that point at the screen go to the vision model with the screenshot. A general question
+        // ("when is Sarvam's 1T model launching?") goes to the main model, which answers from what it knows.
+        let screenAsk = Router.looksAtScreen(ask)
+        Log.info("screen ask: \(screenAsk)")
+        let useVision = visionAvailable && ctx.screenshot != nil && screenAsk
         let system = Prompts.system     // identical on every turn so the prefix caches
 
         var userContent: Any
@@ -454,7 +458,7 @@ final class AppModel: ObservableObject {
             ] as [[String: Any]]
             model = fastModel; version = .v2; reasoning = nil
         } else {
-            if let shot = ctx.screenshot {
+            if let shot = ctx.screenshot, screenAsk {
                 if useVision, let url = ContextCapture.jpegDataURL(shot) {
                     addStep("Looking closely at the screen")
                     let desc = try? await SarvamChat.complete(model: fastModel, version: .v2, messages: [["role": "user", "content": [
