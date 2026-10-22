@@ -67,7 +67,7 @@ struct PageLink: Equatable {
     static func lines(_ links: [PageLink], pageURL: String, max: Int = 80) -> String {
         let pageHost = host(pageURL)
         var seen = Set<String>()
-        var external: [String] = [], internal: [String] = []
+        var external: [String] = [], sameSite: [String] = []
         for l in links {
             guard let u = URL(string: l.url), let scheme = u.scheme?.lowercased(), scheme == "http" || scheme == "https",
                   let h = u.host?.lowercased() else { continue }
@@ -78,10 +78,10 @@ struct PageLink: Equatable {
             seen.insert(key)
             let text = String(l.text.replacingOccurrences(of: "\n", with: " ").prefix(60))
             let line = "\(text.isEmpty ? "-" : text) | \(String(l.url.prefix(160)))"
-            if pageHost.isEmpty || Self.host(h) != pageHost { external.append(line) } else { internal.append(line) }
+            if pageHost.isEmpty || Self.host(h) != pageHost { external.append(line) } else { sameSite.append(line) }
         }
-        let ext = external.prefix(max - min(internal.count, max / 3))
-        return (ext + internal.prefix(max - ext.count)).joined(separator: "\n")
+        let ext = external.prefix(max - min(sameSite.count, max / 3))
+        return (ext + sameSite.prefix(max - ext.count)).joined(separator: "\n")
     }
 
     static func host(_ s: String) -> String {
