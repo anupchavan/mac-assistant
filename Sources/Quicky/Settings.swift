@@ -249,7 +249,8 @@ struct KeyCap: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium))
+            // ✦ is a solid fallback glyph that reads heavier than ⌘ at 11; 10 matches it.
+            .font(.system(size: text == "✦" ? 10 : 11, weight: .medium))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 6)
             .frame(minWidth: 22, minHeight: 22, maxHeight: 22)
