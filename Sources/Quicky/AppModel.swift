@@ -385,6 +385,7 @@ final class AppModel: ObservableObject {
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
                 return
             }
+            Log.info("ask: \(ask.prefix(200))")
             var route = Router.route(ask, app: ctx.appName, computerUseAvailable: Keys.openAI != nil)
             // With the window's controls in hand, the model can press the button itself in milliseconds;
             // computer use (seconds per step) is only for what it can't reach.
