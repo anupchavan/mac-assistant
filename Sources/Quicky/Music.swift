@@ -56,7 +56,7 @@ enum Music: QuickyExtension {
         /// Both links, labelled, so "open it on Apple Music" has a URL to open (or knows it isn't there).
         var apple = "", youtube = ""
         var line: String {
-            let links = [apple.isEmpty ? "Apple Music: not in the \(Music.country.uppercased()) store" : "Apple Music: \(apple)",
+            let links = [apple.isEmpty ? "Apple Music: not found in the \(Music.country.uppercased()) store" : "Apple Music: \(apple)",
                          youtube.isEmpty ? nil : "YouTube Music: \(youtube)"]
             return ([title, artists.isEmpty ? nil : "by \(artists)", album.isEmpty ? nil : "album \(album)", year.isEmpty ? nil : year,
                      length.isEmpty ? nil : length, extra.isEmpty ? nil : extra] + links)
@@ -91,9 +91,12 @@ enum Music: QuickyExtension {
         }.map(\.element)
         let itunesOnly = i.filter { m in !y.prefix(10).contains { same(m, $0) } }
         var out = agreed.map(\.line)
-        if let top = itunesOnly.first { out.append(top.line) }
+        // iTunes' top pick goes up only if it's about what was asked (its search returns something for anything).
+        let asked = Set(query.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 2 })
+        func relevant(_ h: Hit) -> Bool { !asked.isDisjoint(with: Set("\(h.title) \(h.artists)".lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))) }
+        if let top = itunesOnly.first, relevant(top) { out.append(top.line) }
         out += others.map(\.line)
-        out += itunesOnly.dropFirst().map(\.line)
+        out += itunesOnly.dropFirst(out.contains(itunesOnly.first?.line ?? "\u{0}") ? 1 : 0).filter(relevant).map(\.line)
         out = Array(out.prefix(6))
         return out.isEmpty ? "No results for “\(query)”." : out.joined(separator: "\n")
     }
@@ -322,7 +325,7 @@ enum YTMusic {
             return "\(i + 1). \(h.title)\(h.artists.isEmpty ? "" : " — \(h.artists)")\(h.length.isEmpty ? "" : " (\(h.length))")"
         }
         guard !tracks.isEmpty else { return nil }
-        return ([head.map { "\($0.title) · \($0.artists) · \($0.year) · YouTube Music: \($0.link) · Apple Music: not in the \(Music.country.uppercased()) store" } ?? q] + tracks).joined(separator: "\n")
+        return ([head.map { "\($0.title) · \($0.artists) · \($0.year) · YouTube Music: \($0.link) · Apple Music: not found in the \(Music.country.uppercased()) store" } ?? q] + tracks).joined(separator: "\n")
     }
 
     /// The lyrics tab of the best match (YouTube Music licenses these; most Indian and OST songs have them).
