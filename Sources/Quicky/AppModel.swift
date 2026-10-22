@@ -510,6 +510,16 @@ final class AppModel: ObservableObject {
         tags = AudioTags(speakTags: expressive)
         let mode = expressive ? "voice+tags" : voice ? "voice" : "typed"
         let fastModel = Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4")
+        // A key added to ~/.zshrc after launch: look again before giving up on the picked model.
+        let picked = Gemini.pickedModel
+        if Gemini.isOptional(picked) && !Gemini.ready(picked) {
+            Keys.reload()
+            if !Gemini.ready(picked) {
+                let label = Gemini.choices.first { $0.id == picked }?.label ?? picked
+                Log.error("\(picked) has no key; answering with \(Gemini.answerModel)")
+                addStep("\(label) has no key, Sarvam answered", done: true)
+            }
+        }
         let deepModel = route == .agent && !ctx.controls.isEmpty ? Gemini.actionModel : Gemini.answerModel
         // Only asks that point at the screen go to the vision model with the screenshot. A general question
         // ("when is Sarvam's 1T model launching?") goes to the main model, which answers from what it knows.
@@ -564,6 +574,12 @@ final class AppModel: ObservableObject {
         do {
             try await streamAnswer(model: model, version: version, messages: messages, tools: tools, reasoning: reasoning,
                                    maxTokens: maxTokens, voice: voice, pid: ctx.pid, language: language)
+            if !answerStarted && !toolRanThisTurn {
+                // Nothing said and nothing done: say so instead of ending on a blank panel.
+                Log.error("turn ended with no answer and no action")
+                addStep("The model returned nothing")
+                if let i = steps.indices.last { steps[i].state = .error }
+            }
         } catch let e as APIError where version == .v2 && !answerStarted && !toolRanThisTurn && [400, 401, 403, 404, 422].contains(e.status) {
             // Vision (V2) isn't enabled for this key: fall back to on-device OCR + sarvam-105b until relaunch.
             Log.error("v2 refused (\(e.status)): \(e.sanitizedMessage); falling back to OCR")
@@ -707,7 +723,9 @@ final class AppModel: ObservableObject {
                 return out
             }
             Log.time("web_search ×\(searches.count)\(prefetched == nil ? "" : " (prefetched)") wait", since: ts)
-            try await followUp(searches, results, maxTokens: voice ? 400 : 1000)
+            // "auto", so a search can lead to an action ("open five Instagram profiles" finds them, then opens them).
+            // Capped by hop so it can't keep searching.
+            try await followUp(searches, results, maxTokens: voice ? 400 : 1000, choice: hop < 2 ? "auto" : "none")
             return
         }
 

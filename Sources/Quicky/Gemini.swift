@@ -49,9 +49,13 @@ enum Gemini {
     /// The model that answers. Order: ASSISTANT_DEEP_MODEL in the process environment (so a probe can
     /// compare models), then the Settings picker, then ASSISTANT_DEEP_MODEL in ~/.zshrc, then sarvam-105b.
     static var answerModel: String {
-        let env = ProcessInfo.processInfo.environment["ASSISTANT_DEEP_MODEL"].flatMap { $0.isEmpty ? nil : $0 }
-        let picked = env ?? UserDefaults.standard.string(forKey: "answerModel") ?? Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b")
+        let picked = pickedModel
         return isOptional(picked) && !ready(picked) ? "sarvam-105b" : picked
+    }
+    /// What the person chose, whether or not its key is there.
+    static var pickedModel: String {
+        let env = ProcessInfo.processInfo.environment["ASSISTANT_DEEP_MODEL"].flatMap { $0.isEmpty ? nil : $0 }
+        return env ?? UserDefaults.standard.string(forKey: "answerModel") ?? Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b")
     }
 
     /// The model for asks that act on the page (agent route with controls to press). Picking a control
