@@ -327,7 +327,6 @@ final class AppModel: ObservableObject {
             if !shownBeforeHold && turns.isEmpty { hide() }
             return
         }
-        let voicedMs = gate.voicedMs
         prewarmTTS()
         busy = true
         steps = [StatusStep(title: "Listening", state: .active)]
@@ -338,8 +337,7 @@ final class AppModel: ObservableObject {
             let ask = text.trimmingCharacters(in: .whitespacesAndNewlines)
             busy = false
             steps = []
-            guard !SpeechGate.isNoise(ask, voicedMs: voicedMs) else {
-                if !ask.isEmpty { Log.info("dropped likely-silence transcript (\(ask.count) chars, voiced \(Int(voicedMs)) ms)") }
+            guard !SpeechGate.isNoise(ask) else {
                 partial = ""
                 if !shownBeforeHold && turns.isEmpty { hide() }
                 return

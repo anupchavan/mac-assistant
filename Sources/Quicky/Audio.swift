@@ -228,20 +228,12 @@ struct SpeechGate {
         return voiced
     }
 
-    /// Transcripts that mean nothing was said: empty, only punctuation, or a known silence
-    /// hallucination when there was little voiced audio.
-    static func isNoise(_ text: String, voicedMs: Double) -> Bool {
-        let bare = text.lowercased().unicodeScalars.filter { CharacterSet.letters.union(.decimalDigits).union(.whitespaces).contains($0) }
-        let t = String(String.UnicodeScalarView(bare)).split(separator: " ").joined(separator: " ")
-        if t.isEmpty { return true }
-        return voicedMs < 800 && hallucinations.contains(t)
+    /// Transcripts that mean nothing was said: empty or only punctuation. Words made up from silence
+    /// ("Thank you.") never get this far: `SpeechFilter` keeps non-speech away from the transcriber,
+    /// so a short "Hey" is taken at its word.
+    static func isNoise(_ text: String) -> Bool {
+        !text.unicodeScalars.contains { CharacterSet.alphanumerics.contains($0) }
     }
-
-    static let hallucinations: Set<String> = [
-        "thank you", "thanks", "thank you so much", "thanks for watching", "thank you for watching", "you", "bye", "bye bye",
-        "hello", "hi", "hey", "hey how are you", "okay", "ok", "hmm", "um", "uh", "so", "yeah", "yes", "no",
-        "namaste", "dhanyavaad", "dhanyavad", "shukriya", "haan", "accha", "subscribe",
-    ]
 }
 
 /// Holds back audio that isn't speech. Realtime STT invents words from anything else: Saaras v4 writes
