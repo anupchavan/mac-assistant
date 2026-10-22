@@ -67,7 +67,7 @@ final class AppModel: ObservableObject {
     let hotkey = HotkeyMonitor()
 
     private let mic = Microphone()
-    private var stt: SarvamSTT?
+    private var stt: SpeechToText?
     private var contextTask: Task<ScreenContext, Never>?
     private var contextAt = Date.distantPast
     private var turnTask: Task<Void, Never>?
@@ -250,7 +250,7 @@ final class AppModel: ObservableObject {
 
     private func prerollListening() {
         captureContext()
-        let s = SarvamSTT()
+        let s = STT.make()
         s.onPartial = { [weak self] text in self?.partial = text }
         s.onError = { [weak self] m in self?.notice = m }
         s.connect()
@@ -317,7 +317,7 @@ final class AppModel: ObservableObject {
         steps = [StatusStep(title: "Listening", state: .active)]
         let t0 = Date()
         Task {
-            let (text, lang) = await s.finish()
+            let (text, lang) = await s.finish(timeout: 3)
             Log.time("stt.final", since: t0)
             let ask = text.trimmingCharacters(in: .whitespacesAndNewlines)
             busy = false

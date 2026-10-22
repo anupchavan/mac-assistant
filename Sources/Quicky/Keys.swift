@@ -11,6 +11,8 @@ enum Keys {
 
     static var sarvam: String? { lookup(sarvamNames) }
     static var openAI: String? { lookup(openAINames) }
+    static let deepgramNames = ["DEEPGRAM_API_KEY", "DEEPGRAM_KEY"]
+    static var deepgram: String? { lookup(deepgramNames) }
 
     private static var cache: [String: String]?
 
@@ -78,7 +80,7 @@ enum Keys {
             guard let f = find(names) else { return "missing" }
             return "found in \(f.source.rawValue) (\(f.value.count) chars)"
         }
-        return "Sarvam key: \(mark(sarvamNames))\nOpenAI key: \(mark(openAINames))"
+        return "Sarvam key: \(mark(sarvamNames))\nOpenAI key: \(mark(openAINames))\nDeepgram key: \(mark(deepgramNames)) · STT: \(STT.provider.rawValue)"
     }
 }
 
