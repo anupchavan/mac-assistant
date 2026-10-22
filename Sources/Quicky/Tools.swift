@@ -115,6 +115,7 @@ struct ToolCall: Identifiable {
             return list.count > 1 ? "Opening \(list.count) links" : "Opening \(URL(string: list.first ?? "")?.host ?? "the link")"
         case "press": return "Pressing “\(Controls.latest.value[Controls.id(self)]?.label ?? "it")”"
         case "type_text": return "Typing “\(string("text"))”"
+        case "list_tabs": return "Checking your tabs"
         case "close_tabs":
             let n = (arguments["urls"] as? [String])?.count ?? 0
             return "Closing \(n) tab\(n == 1 ? "" : "s")"
@@ -148,7 +149,9 @@ enum Tools {
         return [
             fn("open_url", "Open one or more web pages in the browser, one tab each (up to 5). Use exact URLs from PAGE_LINKS, or ones you know.",
                ["urls": ["type": "array", "items": s, "maxItems": 5]], ["urls"]),
-            fn("close_tabs", "Close browser tabs by URL, in any window. Use it for \"close them\" or \"close the Instagram tab\": pass the URLs of the tabs (from BROWSER_TABS, or the history of what you opened). A URL also matches pages under it. Returns which tabs it actually closed.",
+            fn("list_tabs", "List the browser's open tabs by window (title and URL), front window first. Use it for any question about open tabs or windows; earlier turns don't show what is open now. filter (optional) keeps only tabs whose title or URL contains it.",
+               ["filter": s], []),
+            fn("close_tabs", "Close browser tabs by URL, in any window. Use it for \"close them\" or \"close the Instagram tab\": pass the URLs of the tabs (from list_tabs, BROWSER, or the history of what you opened). A URL also matches pages under it. Returns which tabs it actually closed.",
                ["urls": ["type": "array", "items": s]], ["urls"]),
                         fn("open_app", "Open or focus a Mac app by name", ["name": s], ["name"]),
             fn("reveal_or_open_file", "Open a file, or reveal it in Finder", ["path": s, "reveal": ["type": "boolean"]], ["path"]),
@@ -229,6 +232,8 @@ enum Tools {
                 return await Controls.press(Controls.id(call), pid: pid)
             case "type_text":
                 return await Controls.type(Controls.id(call), text: call.string("text"), submit: call.arguments["submit"] as? Bool ?? true, pid: pid)
+            case "list_tabs":
+                return await BrowserTabs.list(frontPid: pid, filter: call.string("filter"))
             case "close_tabs":
                 return await BrowserTabs.close(matching: (call.arguments["urls"] as? [String]) ?? [], frontPid: pid)
             case "open_app":

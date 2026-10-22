@@ -565,17 +565,15 @@ final class DeepSeekBodyTests: XCTestCase {
     }
 }
 
-final class BrowserTabsContextTests: XCTestCase {
-    func testParseAndBlock() {
-        let raw = "https://youtube.com/watch?v=1\nThe Expanse essay\nTAB\t1\thttps://youtube.com/watch?v=1\tThe Expanse essay\nTAB\t2\thttps://instagram.com/nasa\tNASA\nTAB\t2\t(blank tab)\t\n"
-        let s = ContextCapture.parseBrowser(raw)
-        XCTAssertEqual(s.url, "https://youtube.com/watch?v=1")
-        XCTAssertEqual(s.title, "The Expanse essay")
-        XCTAssertEqual(s.tabs, [["The Expanse essay — https://youtube.com/watch?v=1"], ["NASA — https://instagram.com/nasa", "(blank tab)"]])
-        var ctx = ScreenContext()
-        ctx.browserURL = s.url; ctx.browserTabs = s.tabs
-        let block = ctx.block(language: nil, outputMode: "typed", includeOCR: false)
-        XCTAssertTrue(block.contains("window 1 (front), 1 tab:\n- The Expanse essay"))
-        XCTAssertTrue(block.contains("window 2, 2 tabs:"))
+final class BrowserTabsListTests: XCTestCase {
+    func testParseAndDescribe() {
+        let raw = "1\t1\thttps://youtube.com/watch?v=1\tThe Expanse essay\n2\t1\thttps://instagram.com/nasa\tNASA\n2\t2\t\t\n"
+        let tabs = BrowserTabs.parse(raw)
+        XCTAssertEqual(tabs.count, 3)
+        let text = BrowserTabs.describe(tabs, browser: "Safari")
+        XCTAssertTrue(text.hasPrefix("Safari: 3 tabs in 2 windows"))
+        XCTAssertTrue(text.contains("window 1 (front), 1 tab:\n- The Expanse essay — https://youtube.com/watch?v=1"))
+        XCTAssertTrue(text.contains("window 2, 2 tabs:"))
+        XCTAssertTrue(text.contains("- (blank tab)"))
     }
 }

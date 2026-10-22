@@ -807,7 +807,7 @@ final class AppModel: ObservableObject {
         // So a later "close them", "undo that" or "open it again" can see what this turn actually did.
         if call.name == "open_url" {
             noteOnTurn("Quicky did: opened tabs " + batch.flatMap(\.urlList).joined(separator: " "))
-        } else if !results[0].hasPrefix("error") {
+        } else if call.name != "list_tabs", !results[0].hasPrefix("error") {
             noteOnTurn("Quicky did: \(call.name) \(call.rawArguments.prefix(200)) → \(results[0].prefix(120))")
         }
 
@@ -844,7 +844,7 @@ final class AppModel: ObservableObject {
     /// Tools that may start before the model finishes: no confirm, nothing to undo, nothing that needs the panel.
     nonisolated static func runsEarly(_ call: ToolCall) -> Bool {
         guard !call.needsConfirm else { return false }
-        return ["web_search", "open_url", "open_app", "press_shortcut", "press", "type_text", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
+        return ["web_search", "list_tabs", "open_url", "open_app", "press_shortcut", "press", "type_text", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
             || Extensions.readOnly(call.name)
     }
 
@@ -853,7 +853,8 @@ final class AppModel: ObservableObject {
     /// and "Pressed Follow" would only read the UI back. Data the user can't see (a file moved, an event
     /// added) gets one short line.
     nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?) -> String? {
-        guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") || Controls.needsNextStep($0) }) else { return nil }
+        guard let first = calls.first, first.name != "list_tabs",   // read-only: the model answers from it
+              !results.contains(where: { $0.hasPrefix("error") || Controls.needsNextStep($0) }) else { return nil }
         // A program's own sentence, its question for the user, or an extension result that says what to say.
         if first.name == "run" || ExtensionHost.tool(first.name) != nil { return Composer.spoken(results[0]) }
         if ["open_url", "open_app", "press_shortcut", "press", "type_text", "reveal_or_open_file"].contains(first.name) {
