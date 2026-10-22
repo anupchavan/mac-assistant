@@ -724,6 +724,8 @@ final class AppModel: ObservableObject {
         Log.time("tool \(call.name) ×\(batch.count) ran → \(results.joined(separator: ", ").prefix(120))", since: tr)
         if call.name == "insert_text", !results[0].hasPrefix("error") { hide(); return }
         actionFailedThisTurn = results.contains { $0.hasPrefix("error") || $0.hasSuffix(Controls.unchangedMarker) }
+        // A failed tool shows as failed in the steps, not as a tick.
+        if results.contains(where: { $0.hasPrefix("error") }), let i = steps.indices.last { steps[i].state = .error }
         // So a later "close them", "undo that" or "open it again" can see what this turn actually did.
         if call.name == "open_url" {
             noteOnTurn("Quicky did: opened tabs " + batch.flatMap(\.urlList).joined(separator: " "))
