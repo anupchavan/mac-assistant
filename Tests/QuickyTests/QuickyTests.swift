@@ -430,8 +430,10 @@ final class ExtensionTests: XCTestCase {
         XCTAssertTrue(wrongLength.hasPrefix("ask: "), wrongLength)
     }
     func testProgramErrorsAndLimits() async {
-        XCTAssertTrue(await Composer.run("return nope(").hasPrefix("error: "))
-        XCTAssertTrue(await Composer.run("await no_such_tool({})").hasPrefix("error: "))
+        let syntax = await Composer.run("return nope(")
+        XCTAssertTrue(syntax.hasPrefix("error: "), syntax)
+        let missing = await Composer.run("await no_such_tool({})")
+        XCTAssertTrue(missing.hasPrefix("error: "), missing)
         let r = await Composer.run("return { n: 1 }")
         XCTAssertEqual(JSBridge.parse(r) as? [String: Int], ["n": 1])
     }
@@ -484,7 +486,9 @@ final class ToolSchemaTests: XCTestCase {
 
     func testBrokenJSONAndUnknownTool() {
         XCTAssertEqual(problem("press", #"{"id":3"#), #"error: press arguments are not a JSON object: {"id":3"#)
-        XCTAssertTrue(problem("click", "{}")?.hasPrefix(#"error: there is no tool named "click". Tools: web_search, open_url"#) ?? false)
+        // web_search is a core extension now, so it isn't in Tools.declarations.
+        let unknown = problem("click", "{}") ?? ""
+        XCTAssertTrue(unknown.hasPrefix(#"error: there is no tool named "click". Tools: "#) && unknown.contains("open_url"), unknown)
         XCTAssertNil(problem("copy_to_clipboard", #"{"text":"x"}"#))
     }
 }
