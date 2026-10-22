@@ -81,11 +81,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
             let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
             i.target = self
+            if #available(macOS 27, *) { i.preferredImageVisibility = .hidden }   // no automatic gear on Settings…
             return i
         }
-        let symbol = model.hotkey.trigger.symbol
-        menu.addItem(item("New Chat (⌥ \(symbol))", #selector(newChat)))
-        menu.addItem(.separator())
+        // The trigger gestures can't be menu key equivalents, so they live in Settings › Shortcuts.
+        menu.addItem(item("New Chat", #selector(newChat)))
         menu.addItem(item("Settings…", #selector(openSettings), key: ","))
         menu.addItem(.separator())
         menu.addItem(item("Quit Quicky", #selector(quit), key: "q"))

@@ -193,6 +193,7 @@ final class AppModel: ObservableObject {
             chats.append(Chat())
         }
         chatIndex = chats.count - 1
+        steps = []
     }
 
     func show() {
@@ -1107,6 +1108,7 @@ final class AppModel: ObservableObject {
 
     private func afterSwitch() {
         if speaking { stopSpeaking() }
+        if !busy { steps = [] }      // the last answer's work log belongs to the chat it ran in
         lastUsed = Date()
         follow = true
         overlay = .none
