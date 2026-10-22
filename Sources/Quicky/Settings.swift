@@ -86,6 +86,11 @@ struct GeneralSettings: View {
     }
 
     private var answerNote: String {
+        if answer.hasPrefix("aistudio/") {
+            return Keys.aiStudio != nil
+                ? "Gemini API (AI Studio), served outside India, so slower. Also reads screenshots. Falls back to Sarvam if it fails."
+                : "Add a Gemini API key in API Keys to use it. Sarvam until then."
+        }
         guard answer.hasPrefix("gemini") else { return "Sarvam, India servers. Screenshots go to gemma4." }
         return hasGemini
             ? "Vertex AI in Mumbai, thinking minimal. Also reads screenshots. Falls back to Sarvam if it fails."
@@ -112,6 +117,7 @@ struct KeysSettings: View {
                 KeyRow(title: "OpenAI", hint: "Optional: clicking for you", names: Keys.openAINames)
                 KeyRow(title: "Deepgram", hint: "Optional: faster speech recognition", names: Keys.deepgramNames)
                 KeyRow(title: "Google Cloud", hint: "Optional: Gemini answers from Mumbai", names: Keys.vertexNames)
+                KeyRow(title: "Gemini API", hint: "Optional: Gemini 3.8 Flash from AI Studio", names: Keys.aiStudioNames)
                 ProjectRow()
             } footer: {
                 Text("Saved in your Keychain and used right away. An export in ~/.zshrc works too.")
