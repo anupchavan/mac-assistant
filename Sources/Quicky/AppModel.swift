@@ -74,8 +74,9 @@ final class AppModel: ObservableObject {
     private var contextTask: Task<ScreenContext, Never>?
     private var contextAt = Date.distantPast
     private var turnTask: Task<Void, Never>?
-    private var tts: SarvamTTS?
-    private var player = PCMPlayer(sampleRate: 22050)
+    private var tts: TextToSpeech?
+    private var player = PCMPlayer(sampleRate: Double(TTS.sampleRate))
+    private var tags = AudioTags(speakTags: false)   // this turn's answer stream: tags spoken, never shown
     private var ttsFinalReceived = false
     private var sentenceBuffer = ""
     private var spokenChars = 0          // answer characters handed to TTS
@@ -88,7 +89,7 @@ final class AppModel: ObservableObject {
     private var lastRetry: (() -> Void)?
     private var toolRanThisTurn = false     // never re-run a turn whose tool already acted
     private var searchPrefetch: Task<String, Never>?   // speculative web search for the ask, started with the model call
-    private var warmTTS: (socket: SarvamTTS, at: Date)?   // opened while the user finishes speaking, adopted by startTTS
+    private var warmTTS: (socket: TextToSpeech, provider: TTS.Provider, at: Date)?   // opened while the user finishes speaking, adopted by startTTS
     private var lastLanguage: String?
     private var turnStart = Date()
     private var firstAudioLogged = true
@@ -470,8 +471,10 @@ final class AppModel: ObservableObject {
     private func appendAnswer(_ text: String, voice: Bool) {
         guard chats.indices.contains(chatIndex), !chats[chatIndex].turns.isEmpty else { return }
         if !answerStarted { answerStarted = true }
-        chats[chatIndex].turns[chats[chatIndex].turns.count - 1].answer += text
-        if voice { feedTTS(text) }
+        guard voice else { chats[chatIndex].turns[chats[chatIndex].turns.count - 1].answer += text; return }
+        let (shown, spoken) = tags.feed(text)
+        chats[chatIndex].turns[chats[chatIndex].turns.count - 1].answer += shown
+        feedTTS(spoken)
     }
 
     // MARK: - Answering
@@ -503,7 +506,10 @@ final class AppModel: ObservableObject {
     }
 
     private func answer(ask: String, ctx: ScreenContext, route: Route, language: String?, voice: Bool) async throws {
-        let mode = voice ? "voice" : "typed"
+        // Eleven v4 can act out audio tags; only then does the model hear it may use them.
+        let expressive = voice && TTS.provider == .elevenLabs
+        tags = AudioTags(speakTags: expressive)
+        let mode = expressive ? "voice+tags" : voice ? "voice" : "typed"
         let fastModel = Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4")
         let deepModel = route == .agent && !ctx.controls.isEmpty ? Gemini.actionModel : Gemini.answerModel
         // Only asks that point at the screen go to the vision model with the screenshot. A general question
@@ -936,11 +942,11 @@ final class AppModel: ObservableObject {
     /// mouse no longer stops it (Esc and the pill's Stop do).
     private func userMouse(dx: Double, dy: Double, clicked: Bool) {}
 
-    // MARK: - Voice out (Bulbul)
+    // MARK: - Voice out (Bulbul or ElevenLabs)
 
-    /// A Bulbul socket whose callbacks only act while it is the current one (a warm spare stays quiet).
-    private func makeTTS(_ lang: String) -> SarvamTTS? {
-        let t = SarvamTTS(language: lang, sampleRate: 22050)
+    /// A TTS socket whose callbacks only act while it is the current one (a warm spare stays quiet).
+    private func makeTTS(_ lang: String) -> TextToSpeech? {
+        let t = TTS.make(language: lang)
         t.onAudio = { [weak self, weak t] pcm in
             guard let self, let t else { return }
             DispatchQueue.main.async {
@@ -964,7 +970,7 @@ final class AppModel: ObservableObject {
     /// first sentence doesn't wait for a TLS + WebSocket handshake.
     private func prewarmTTS() {
         warmTTS?.socket.close()
-        warmTTS = makeTTS(Sarvam.ttsLanguage(for: lastLanguage)).map { ($0, Date()) }
+        warmTTS = makeTTS(Sarvam.ttsLanguage(for: lastLanguage)).map { ($0, TTS.provider, Date()) }
     }
 
     /// One cheap request to api.sarvam.ai on fn-down, so the chat call reuses an open HTTPS connection
@@ -989,8 +995,8 @@ final class AppModel: ObservableObject {
         tts?.close()
         player.stop()
         let lang = Sarvam.ttsLanguage(for: language)
-        let t: SarvamTTS
-        if let w = warmTTS, w.socket.language == lang, Date().timeIntervalSince(w.at) < 20 {
+        let t: TextToSpeech
+        if let w = warmTTS, w.socket.language == lang, w.provider == TTS.provider, Date().timeIntervalSince(w.at) < 20 {
             t = w.socket
         } else {
             warmTTS?.socket.close()
@@ -1017,6 +1023,7 @@ final class AppModel: ObservableObject {
 
     private func flushTTS() {
         guard let tts else { return }
+        sentenceBuffer += tags.feed("", end: true).spoken
         if !sentenceBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { speakSentence(sentenceBuffer) }
         sentenceBuffer = ""
         tts.flush()
@@ -1037,7 +1044,9 @@ final class AppModel: ObservableObject {
         t = t.replacingOccurrences(of: #"```[\s\S]*?```"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"`[^`]*`"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"https?://\S+"#, with: "the link", options: .regularExpression)
-        t = t.replacingOccurrences(of: #"[*_#>\[\]|]"#, with: "", options: .regularExpression)
+        t = t.replacingOccurrences(of: #"[*_#>|]"#, with: "", options: .regularExpression)
+        // Brackets go, except around an audio tag (only ElevenLabs turns still have any; see AudioTags).
+        t = t.replacingOccurrences(of: #"\[(?![a-z ]{1,30}\])|(?<!\[[a-z ]{1,30})\]"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
         return t.trimmingCharacters(in: .whitespaces)
     }

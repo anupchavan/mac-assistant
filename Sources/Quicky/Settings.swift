@@ -2,10 +2,10 @@ import AppKit
 import SwiftUI
 
 /// Settings (⌘,): a standard preferences window with toolbar tabs, like Music's.
-/// One fixed size for every tab; the forms are grouped and sized to fit it.
+/// One fixed size for every tab; General fits it, API Keys scrolls.
 @MainActor
 final class SettingsWindow {
-    static let size = NSSize(width: 500, height: 380)
+    static let size = NSSize(width: 500, height: 450)
     private(set) var window: NSWindow?
 
     func show() {
@@ -44,6 +44,8 @@ final class SettingsWindow {
 struct GeneralSettings: View {
     @State private var stt = STT.chosen.rawValue
     @State private var pace = SarvamTTS.pace
+    @State private var voice = TTS.chosen.rawValue
+    @State private var hasElevenLabsKey = Keys.elevenLabs != nil
     @State private var hasDeepgramKey = Keys.deepgram != nil
     @State private var answer = UserDefaults.standard.string(forKey: "answerModel") ?? "sarvam-105b"
     @State private var hasGemini = Gemini.available
@@ -72,17 +74,29 @@ struct GeneralSettings: View {
                 .onChange(of: stt) { _, v in UserDefaults.standard.set(v, forKey: "sttProvider") }
             }
             Section("Speaking") {
-                Picker("Voice speed", selection: $pace) {
-                    Text("Slower").tag(0.9)
-                    Text("Normal").tag(1.0)
-                    Text("Faster").tag(1.15)
+                Picker(selection: $voice) {
+                    Text("Sarvam Bulbul v3").tag(TTS.Provider.sarvam.rawValue)
+                    Text("ElevenLabs v4 (Clara)").tag(TTS.Provider.elevenLabs.rawValue)
+                } label: {
+                    Text("Voice")
+                    Text(voiceNote)
                 }
-                .pickerStyle(.segmented)
-                .onChange(of: pace) { _, v in UserDefaults.standard.set(v, forKey: "ttsPace") }
+                .pickerStyle(.menu)
+                .onChange(of: voice) { _, v in UserDefaults.standard.set(v, forKey: "ttsProvider") }
+                // Eleven v4 has no speed control; it always speaks at its natural pace.
+                if voice == TTS.Provider.sarvam.rawValue {
+                    Picker("Voice speed", selection: $pace) {
+                        Text("Slower").tag(0.9)
+                        Text("Normal").tag(1.0)
+                        Text("Faster").tag(1.15)
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: pace) { _, v in UserDefaults.standard.set(v, forKey: "ttsPace") }
+                }
             }
         }
         .formStyle(.grouped)
-        .onAppear { hasDeepgramKey = Keys.deepgram != nil; hasGemini = Gemini.available }
+        .onAppear { hasDeepgramKey = Keys.deepgram != nil; hasGemini = Gemini.available; hasElevenLabsKey = Keys.elevenLabs != nil }
     }
 
     private var answerNote: String {
@@ -90,6 +104,13 @@ struct GeneralSettings: View {
         return hasGemini
             ? "Vertex AI in Mumbai, thinking minimal. Also reads screenshots. Falls back to Sarvam if it fails."
             : "Add a Google Cloud key and project ID in API Keys to use it. Sarvam until then."
+    }
+
+    private var voiceNote: String {
+        guard voice == TTS.Provider.elevenLabs.rawValue else { return "India servers, the quickest to start talking." }
+        return hasElevenLabsKey
+            ? "More expressive: Quicky can sigh or laugh. Takes a little longer to start."
+            : "Add an ElevenLabs key in API Keys to use it. Bulbul until then."
     }
 
     private var sttNote: String {
@@ -113,6 +134,7 @@ struct KeysSettings: View {
                 KeyRow(title: "Deepgram", hint: "Optional: faster speech recognition", names: Keys.deepgramNames)
                 KeyRow(title: "Google Cloud", hint: "Optional: Gemini answers from Mumbai", names: Keys.vertexNames)
                 ProjectRow()
+                KeyRow(title: "ElevenLabs", hint: "Optional: the expressive Eleven v4 voice", names: Keys.elevenLabsNames)
             } footer: {
                 Text("Saved in your Keychain and used right away. An export in ~/.zshrc works too.")
                     .font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
