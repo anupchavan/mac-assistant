@@ -248,12 +248,16 @@ final class ReflexTests: XCTestCase {
 
     func testLocalReplyAfterTools() {
         let close = ToolCall(id: "1", name: "press_shortcut", arguments: ["keys": "cmd+w"], rawArguments: "")
-        XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: false, language: "en-IN"), "Closed.")
+        // Visible actions say nothing: the screen already shows it.
+        XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: false, language: "en-IN"), "")
+        let find = ToolCall(id: "f", name: "press_shortcut", arguments: ["keys": "cmd+f"], rawArguments: "")
+        XCTAssertEqual(AppModel.localReply([find], results: ["pressed"], saidAlready: false, language: nil), "Pressed ⌘F.")
+        let press = ToolCall(id: "p", name: "press", arguments: ["id": 3], rawArguments: "")
+        XCTAssertNil(AppModel.localReply([press], results: ["pressed button “Play”" + Controls.unchangedMarker], saidAlready: false, language: nil))
         XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: true, language: nil), "")
         XCTAssertNil(AppModel.localReply([close], results: ["error: Safari isn't running"], saidAlready: false, language: nil))
-        XCTAssertNil(AppModel.localReply([close], results: ["pressed"], saidAlready: false, language: "ta-IN"))
         let links = (1...3).map { ToolCall(id: "\($0)", name: "open_url", arguments: ["url": "https://x.com/a\($0)"], rawArguments: "") }
-        XCTAssertEqual(AppModel.localReply(links, results: ["opened", "opened", "opened"], saidAlready: false, language: nil), "Opened 3 tabs.")
+        XCTAssertEqual(AppModel.localReply(links, results: ["opened", "opened", "opened"], saidAlready: false, language: nil), "")
         let search = ToolCall(id: "s", name: "web_search", arguments: ["query": "x"], rawArguments: "")
         XCTAssertNil(AppModel.localReply([search], results: ["[1] …"], saidAlready: false, language: nil))
     }
@@ -296,5 +300,7 @@ final class TemporalityTests: XCTestCase {
     }
     func testPressedLabel() {
         XCTAssertEqual(Controls.label(from: "pressed button “Follow”"), "Follow")
+        let move = ToolCall(id: "m", name: "move_files", arguments: ["paths": ["/a", "/b"], "destination": "/x"], rawArguments: "")
+        XCTAssertEqual(AppModel.localReply([move], results: ["moved 2 files"], saidAlready: false, language: nil), "Moved 2 files.")
     }
 }

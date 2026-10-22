@@ -13,6 +13,8 @@ struct Control {
     let frame: CGRect?
 
     var line: String { "\(id) | \(role) | \(label)\(state.isEmpty ? "" : " (\(state))")" }
+    /// Identity across two reads of the window (ids are renumbered every read).
+    var key: String { "\(role)|\(label)|\(state)" }
 
     /// Pressing these changes something for good or for other people, so the confirm card asks first.
     var consequential: Bool {
@@ -122,17 +124,59 @@ enum Controls {
         return ""
     }
 
-    /// AXPress first; a real click at the centre only if the element won't take it. Returns a result for the model.
+    /// Marker in a press result: what follows is a menu or dialog the press opened, for the model's next step.
+    static let openedMarker = "\nIT OPENED (press one of these next if the ask needs it):\n"
+    static let unchangedMarker = ", but nothing on screen changed"
+
+    /// AXPress first; a real click at the centre only if the element won't take it. Then the window is read
+    /// again, so the result says what the press did: opened a menu or dialog (listed, for a second press like
+    /// Instagram's Following → Unfollow), changed the screen, or changed nothing.
     static func press(_ id: Int, pid: pid_t?) async -> String {
         guard let c = latest.value[id] else { return "error: no control \(id) on screen now" }
+        let before = Set(latest.value.values.map(\.key))
         AXUIElementSetMessagingTimeout(c.element, 0.3)
-        if AXUIElementPerformAction(c.element, kAXPressAction as CFString) == .success {
-            return "pressed \(c.role) “\(c.label)”"
+        var did = "pressed \(c.role) “\(c.label)”"
+        if AXUIElementPerformAction(c.element, kAXPressAction as CFString) != .success {
+            guard let f = c.frame, f.width > 0 else { return "error: \(c.role) “\(c.label)” can't be pressed" }
+            if let pid, let app = NSRunningApplication(processIdentifier: pid) { await MainActor.run { FocusMove.begin(); _ = app.activate() } }
+            await ComputerUser.hidClick(at: CGPoint(x: f.midX, y: f.midY), count: 1, right: false, src: HotkeyMonitor.syntheticSource(.combinedSessionState))
+            did = "clicked \(c.role) “\(c.label)”"
         }
-        guard let f = c.frame, f.width > 0 else { return "error: \(c.role) “\(c.label)” can't be pressed" }
-        if let pid, let app = NSRunningApplication(processIdentifier: pid) { await MainActor.run { FocusMove.begin(); _ = app.activate() } }
-        await ComputerUser.hidClick(at: CGPoint(x: f.midX, y: f.midY), count: 1, right: false, src: HotkeyMonitor.syntheticSource(.combinedSessionState))
-        return "clicked \(c.role) “\(c.label)”"
+        guard let pid else { return did }
+        // Menus and dialogs animate in; look twice before calling it unchanged.
+        var fresh: [Control] = []
+        for wait in [250, 350] as [UInt64] {
+            try? await Task.sleep(nanoseconds: wait * 1_000_000)
+            let after = await harvest(pid: pid)
+            fresh = after.filter { !before.contains($0.key) }
+            if !fresh.isEmpty || !after.contains(where: { $0.key == c.key }) { break }
+        }
+        if fresh.isEmpty && latest.value.values.contains(where: { $0.key == c.key }) { return did + unchangedMarker }
+        if let opened = openedSurface(fresh, pressed: c) { return did + openedMarker + lines(opened, max: 30) }
+        return did
+    }
+
+    /// The new controls when they sit in a menu, dialog, sheet or popover (checked by walking up a few
+    /// parents), or when a menu-like button produced a short list. Nil when the press just changed the page.
+    private static func openedSurface(_ fresh: [Control], pressed: Control) -> [Control]? {
+        guard !fresh.isEmpty else { return nil }
+        let containers: Set<String> = ["AXMenu", "AXSheet", "AXPopover", "AXDialog"]
+        let dialogSubroles: Set<String> = ["AXDialog", "AXApplicationDialog", "AXSystemDialog", "AXFloatingWindow", "AXApplicationAlertDialog"]
+        for c in fresh.prefix(8) {
+            var el = c.element
+            for _ in 0..<10 {
+                guard let parent: AXUIElement = ContextCapture.attr(el, kAXParentAttribute) else { break }
+                AXUIElementSetMessagingTimeout(parent, 0.03)
+                let role: String = ContextCapture.attr(parent, kAXRoleAttribute) ?? ""
+                let sub: String = ContextCapture.attr(parent, kAXSubroleAttribute) ?? ""
+                if containers.contains(role) || dialogSubroles.contains(sub) { return fresh }
+                if role == "AXWindow" || role == "AXWebArea" { break }
+                el = parent
+            }
+        }
+        let menuish = ["popup", "menu button"].contains(pressed.role)
+            || pressed.label.range(of: #"(?i)chevron|more|options|menu|…|\.\.\.|following"#, options: .regularExpression) != nil
+        return menuish && fresh.count <= 15 ? fresh : nil
     }
 
     /// "pressed button “Follow”" → "Follow".

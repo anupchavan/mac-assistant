@@ -461,12 +461,12 @@ final class AppModel: ObservableObject {
     private func historyMessages() -> [[String: Any]] {
         let previous = chats[chatIndex].turns.dropLast().suffix(6)
         var out: [[String: Any]] = []
-        for t in previous where !t.answer.isEmpty {
+        for t in previous where !t.answer.isEmpty || t.contextNote != nil {
             // When and where each earlier ask happened, so "search for X" four seconds after "open YouTube"
             // reads as a follow-up on that screen, not a fresh question.
             let when = "[\(Self.ago(t.at)) in \(t.appLabel.isEmpty ? "another app" : t.appLabel)]"
             out.append(["role": "user", "content": "\(when) \(t.ask)" + (t.contextNote.map { "\n\n(\($0))" } ?? "")])
-            out.append(["role": "assistant", "content": t.rememberedAnswer])
+            out.append(["role": "assistant", "content": t.answer.isEmpty ? "(did it, said nothing)" : t.rememberedAnswer])
         }
         return out
     }
@@ -535,7 +535,8 @@ final class AppModel: ObservableObject {
     }
 
     private func streamAnswer(model: String, version: SarvamChat.Version, messages: [[String: Any]], tools: [[String: Any]]?,
-                              toolChoice: String = "auto", reasoning: String?, maxTokens: Int, voice: Bool, pid: pid_t, language: String?) async throws {
+                              toolChoice: String = "auto", reasoning: String?, maxTokens: Int, voice: Bool, pid: pid_t, language: String?,
+                              hop: Int = 0) async throws {
         var calls: [Int: (id: String, name: String, args: String)] = [:]
         // Safe, instant tools start the moment their arguments are complete JSON, while the model is still
         // streaming (the next call, or just the closing events). A JSON object can't be a prefix of a longer
@@ -601,15 +602,15 @@ final class AppModel: ObservableObject {
             let a = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any]) ?? [:]
             return ToolCall(id: c.id.isEmpty ? "call_\(i)" : c.id, name: c.name, arguments: a, rawArguments: c.args)
         }
-        func followUp(_ ran: [ToolCall], _ results: [String], maxTokens: Int) async throws {
+        func followUp(_ ran: [ToolCall], _ results: [String], maxTokens: Int, choice: String = "none") async throws {
             var f = messages
             f.append(["role": "assistant", "content": assistantText,
                       "tool_calls": ran.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.rawArguments]] }])
             for (c, r) in zip(ran, results) { f.append(["role": "tool", "tool_call_id": c.id, "content": r]) }
             if voice && (tts == nil || ttsFinalReceived) { startTTS(language: language) }
             if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
-            try await streamAnswer(model: model, version: version, messages: f, tools: tools, toolChoice: "none", reasoning: reasoning,
-                                   maxTokens: maxTokens, voice: voice, pid: pid, language: language)
+            try await streamAnswer(model: model, version: version, messages: f, tools: tools, toolChoice: choice, reasoning: reasoning,
+                                   maxTokens: maxTokens, voice: voice, pid: pid, language: language, hop: hop + 1)
         }
 
         if first.name == "web_search" {
@@ -695,7 +696,15 @@ final class AppModel: ObservableObject {
             noteOnTurn("Quicky did: \(call.name) \(call.rawArguments.prefix(200)) → \(results[0].prefix(120))")
         }
 
-        // Success on a plain action needs no second model trip: say it from a template right away.
+        // The press opened a menu or dialog (Following → Unfollow): one more model step with what opened,
+        // tools allowed, so it can press the item the ask was really about. At most three steps.
+        if call.name == "press", results[0].contains(Controls.openedMarker), hop < 3 {
+            Log.time("press opened a menu/dialog; next step", since: t0)
+            try await followUp(batch, results, maxTokens: 300, choice: "auto")
+            return
+        }
+
+        // Success on a plain action needs no second model trip and no words: the screen already shows it.
         if let reply = Self.localReply(batch, results: results, saidAlready: !assistantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                                        language: language) {
             Log.time("tool \(call.name) done, local reply (no follow-up model call)", since: t0)
@@ -716,24 +725,23 @@ final class AppModel: ObservableObject {
         return ["web_search", "open_url", "open_app", "press_shortcut", "press", "type_text", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
     }
 
-    /// The one-line reply after a tool that worked, or nil to ask the model (errors, other languages, tools
-    /// whose result needs explaining). "" means the model already said its lead-in, so say nothing more.
+    /// What to say after a tool that worked, or nil to let the model explain (errors, a press that changed
+    /// nothing, tools whose result needs words). "" means say nothing: the change is right there on screen,
+    /// and "Pressed Follow" would only read the UI back. Data the user can't see (a file moved, an event
+    /// added) gets one short line.
     nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?) -> String? {
-        guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") }) else { return nil }
+        guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") || $0.hasSuffix(Controls.unchangedMarker) }) else { return nil }
+        if ["open_url", "open_app", "press_shortcut", "press", "type_text", "reveal_or_open_file"].contains(first.name) {
+            // An unnamed shortcut is the one visible action worth naming: it may have been a wrong guess.
+            if first.name == "press_shortcut", Reflex.reply(forKeys: first.string("keys")) == nil, !saidAlready {
+                return "Pressed \(Tools.symbols(first.string("keys")))."
+            }
+            return ""
+        }
         if let l = language, !l.hasPrefix("en") { return l == "hi-IN" && !saidAlready ? "Ho gaya." : (saidAlready ? "" : nil) }
         if saidAlready { return "" }
         switch first.name {
-        case "open_url":
-            if calls.count > 1 { return "Opened \(calls.count) tabs." }
-            let host = PageLink.host(first.string("url"))
-            return host.isEmpty ? "Opened it." : "Opened \(host)."
-        case "open_app": return "Opened \(first.string("name"))."
-        // A shortcut we can't name gets named by its keys, never a bare "Done." that hides a wrong guess.
-        case "press_shortcut": return Reflex.reply(forKeys: first.string("keys")) ?? "Pressed \(Tools.symbols(first.string("keys")))."
         case "copy_to_clipboard": return "Copied."
-        case "press": return "Pressed \(Controls.label(from: results[0]) ?? "it")."
-        case "type_text": return first.arguments["submit"] as? Bool == false ? "Typed it." : "Done."
-        case "reveal_or_open_file": return first.arguments["reveal"] as? Bool == true ? "There it is in Finder." : "Opened it."
         case "create_event": return "Added to your calendar."
         case "create_reminder": return "Reminder set."
         case "move_files":
@@ -759,7 +767,7 @@ final class AppModel: ObservableObject {
         toolRanThisTurn = true
         let c = r.calls[0]
         noteOnTurn(c.name == "open_url" ? "Quicky did: opened tabs " + c.string("url") : "Quicky did: \(c.name) \(c.arguments) → \(results[0].prefix(120))")
-        appendAnswer(r.reply, voice: voice)
+        // The screen shows it happened; a spoken "Closed." only reads the action back.
         if voice { flushTTS() }
         return true
     }
