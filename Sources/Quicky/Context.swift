@@ -24,6 +24,8 @@ struct ScreenContext {
     var pointerElementFrame: CGRect?
     /// Every link on the open web page with its real URL, footer included (browsers only).
     var links: [PageLink] = []
+    /// Buttons, toggles and tabs in the focused window, numbered for the press tool.
+    var controls: [Control] = []
 
     var appIcon: NSImage? {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
@@ -58,6 +60,7 @@ struct ScreenContext {
         add("VISIBLE_TEXT (truncated)", visibleText, limit: 3000)
         if includeOCR { add("SCREEN_TEXT_OCR (truncated)", ocrText, limit: 4000) }
         if includeLinks { add("PAGE_LINKS (text | url, whole page)", PageLink.lines(links, pageURL: browserURL), limit: 6000) }
+        if includeLinks { add("CONTROLS (id | kind | label, visible in the window)", Controls.lines(controls), limit: 4000) }
         add("LANGUAGE", language ?? "")
         let f = ISO8601DateFormatter(); f.timeZone = .current; f.formatOptions = [.withInternetDateTime]
         add("NOW", f.string(from: Date()))
@@ -84,6 +87,7 @@ enum ContextCapture {
         async let shot = screenshot(pid: pid)
         async let scripted = scriptedContext(bundleID: bundleID)
         async let links: [PageLink] = PageLink.browsers.contains(bundleID) ? await PageLink.harvest(pid: pid) : []
+        async let controls = Controls.harvest(pid: pid)
         readAX(&ctx)
         if let (img, frame) = await shot { ctx.screenshot = img; if ctx.windowFrame == .zero { ctx.windowFrame = frame } }
         let s = await scripted
@@ -91,8 +95,9 @@ enum ContextCapture {
         ctx.browserURL = s.url
         ctx.browserTitle = s.title
         ctx.links = await links
+        ctx.controls = await controls
         ctx.captureMs = Date().timeIntervalSince(t0) * 1000
-        Log.info(String(format: "context %@ %.0f ms (shot %@, %d links)", ctx.appName, ctx.captureMs, ctx.screenshot == nil ? "no" : "yes", ctx.links.count))
+        Log.info(String(format: "context %@ %.0f ms (shot %@, %d links, %d controls)", ctx.appName, ctx.captureMs, ctx.screenshot == nil ? "no" : "yes", ctx.links.count, ctx.controls.count))
         return ctx
     }
 

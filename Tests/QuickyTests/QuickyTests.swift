@@ -1,4 +1,5 @@
 import XCTest
+import ApplicationServices
 @testable import Quicky
 
 final class FnGestureTests: XCTestCase {
@@ -265,5 +266,23 @@ final class BrowserTabsTests: XCTestCase {
         XCTAssertTrue(BrowserTabs.matches("https://x.com/porterindia/status/1", wanted))
         XCTAssertFalse(BrowserTabs.matches("https://www.instagram.com/porter_india", wanted))
         XCTAssertFalse(BrowserTabs.matches("https://porter.in/", wanted))
+    }
+}
+
+final class ControlTests: XCTestCase {
+    func control(_ label: String) -> Control {
+        Control(id: 1, role: "button", label: label, state: "", element: AXUIElementCreateSystemWide(), frame: nil)
+    }
+    func testConsequentialLabelsAskFirst() {
+        XCTAssertTrue(control("Block @someone").consequential)
+        XCTAssertTrue(control("Delete").consequential)
+        XCTAssertTrue(control("Send").consequential)
+        XCTAssertFalse(control("Follow").consequential)
+        XCTAssertFalse(control("Like").consequential)
+        XCTAssertFalse(control("Mute").consequential)
+    }
+    func testLine() {
+        let c = Control(id: 7, role: "switch", label: "Dark mode", state: "off", element: AXUIElementCreateSystemWide(), frame: nil)
+        XCTAssertEqual(c.line, "7 | switch | Dark mode (off)")
     }
 }

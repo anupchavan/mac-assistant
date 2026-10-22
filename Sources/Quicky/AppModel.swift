@@ -383,7 +383,10 @@ final class AppModel: ObservableObject {
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
                 return
             }
-            let route = Router.route(ask, app: ctx.appName, computerUseAvailable: Keys.openAI != nil)
+            var route = Router.route(ask, app: ctx.appName, computerUseAvailable: Keys.openAI != nil)
+            // With the window's controls in hand, the model can press the button itself in milliseconds;
+            // computer use (seconds per step) is only for what it can't reach.
+            if route == .computer, !ctx.controls.isEmpty { route = .agent }
             Log.info("route \(route.rawValue)")
             do {
                 if route == .computer { try await runComputer(ask: ask, ctx: ctx, language: language, voice: voice) }
@@ -675,9 +678,11 @@ final class AppModel: ObservableObject {
         }
         Log.time("tool \(call.name) ×\(batch.count) ran → \(results.joined(separator: ", ").prefix(120))", since: tr)
         if call.name == "insert_text", !results[0].hasPrefix("error") { hide(); return }
+        // So a later "close them", "undo that" or "open it again" can see what this turn actually did.
         if call.name == "open_url" {
-            // So "close them" next turn knows exactly which tabs these were.
-            noteOnTurn("Quicky opened these tabs: " + batch.map { $0.string("url") }.joined(separator: " "))
+            noteOnTurn("Quicky did: opened tabs " + batch.map { $0.string("url") }.joined(separator: " "))
+        } else if !results[0].hasPrefix("error") {
+            noteOnTurn("Quicky did: \(call.name) \(call.rawArguments.prefix(200)) → \(results[0].prefix(120))")
         }
 
         // Success on a plain action needs no second model trip: say it from a template right away.
@@ -698,7 +703,7 @@ final class AppModel: ObservableObject {
     /// Tools that may start before the model finishes: no confirm, nothing to undo, nothing that needs the panel.
     nonisolated static func runsEarly(_ call: ToolCall) -> Bool {
         guard !call.needsConfirm else { return false }
-        return ["web_search", "open_url", "open_app", "press_shortcut", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
+        return ["web_search", "open_url", "open_app", "press_shortcut", "press", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
     }
 
     /// The one-line reply after a tool that worked, or nil to ask the model (errors, other languages, tools
@@ -715,6 +720,7 @@ final class AppModel: ObservableObject {
         case "open_app": return "Opened \(first.string("name"))."
         case "press_shortcut": return Reflex.reply(forKeys: first.string("keys")) ?? "Done."
         case "copy_to_clipboard": return "Copied."
+        case "press": return "Done."
         case "reveal_or_open_file": return first.arguments["reveal"] as? Bool == true ? "There it is in Finder." : "Opened it."
         case "create_event": return "Added to your calendar."
         case "create_reminder": return "Reminder set."
@@ -739,7 +745,8 @@ final class AppModel: ObservableObject {
             return false
         }
         toolRanThisTurn = true
-        if r.calls[0].name == "open_url" { noteOnTurn("Quicky opened these tabs: " + r.calls.map { $0.string("url") }.joined(separator: " ")) }
+        let c = r.calls[0]
+        noteOnTurn(c.name == "open_url" ? "Quicky did: opened tabs " + c.string("url") : "Quicky did: \(c.name) \(c.arguments) → \(results[0].prefix(120))")
         appendAnswer(r.reply, voice: voice)
         if voice { flushTTS() }
         return true
