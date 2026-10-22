@@ -6,7 +6,7 @@ import SwiftUI
 @MainActor
 final class SettingsWindow {
     static let size = NSSize(width: 500, height: 380)
-    private var window: NSWindow?
+    private(set) var window: NSWindow?
 
     func show() {
         if window == nil {
@@ -48,17 +48,16 @@ struct GeneralSettings: View {
 
     var body: some View {
         Form {
-            Section {
-                Picker("Speech recognition", selection: $stt) {
+            Section("Listening") {
+                Picker(selection: $stt) {
                     Text("Deepgram Nova-3").tag(STT.Provider.deepgram.rawValue)
                     Text("Sarvam Saaras v4").tag(STT.Provider.sarvam.rawValue)
+                } label: {
+                    Text("Speech recognition")
+                    Text(sttNote)   // second label line: the form shows it as a subtitle under the title
                 }
                 .pickerStyle(.menu)
                 .onChange(of: stt) { _, v in UserDefaults.standard.set(v, forKey: "sttProvider") }
-            } header: {
-                Text("Listening")
-            } footer: {
-                Text(sttNote).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
             Section("Speaking") {
                 Picker("Voice speed", selection: $pace) {
@@ -95,7 +94,7 @@ struct KeysSettings: View {
                 KeyRow(title: "Deepgram", hint: "Optional: faster speech recognition", names: Keys.deepgramNames)
             } footer: {
                 Text("Saved in your Keychain and used right away. An export in ~/.zshrc works too.")
-                    .font(.callout).foregroundStyle(.secondary)
+                    .font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
             }
         }
         .formStyle(.grouped)
