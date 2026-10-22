@@ -45,9 +45,21 @@ struct GeneralSettings: View {
     @State private var stt = STT.chosen.rawValue
     @State private var pace = SarvamTTS.pace
     @State private var hasDeepgramKey = Keys.deepgram != nil
+    @State private var answer = UserDefaults.standard.string(forKey: "answerModel") ?? "sarvam-105b"
+    @State private var hasGemini = Gemini.available
 
     var body: some View {
         Form {
+            Section("Answering") {
+                Picker(selection: $answer) {
+                    ForEach(Gemini.choices, id: \.id) { Text($0.label).tag($0.id) }
+                } label: {
+                    Text("Answer model")
+                    Text(answerNote)
+                }
+                .pickerStyle(.menu)
+                .onChange(of: answer) { _, v in UserDefaults.standard.set(v, forKey: "answerModel") }
+            }
             Section("Listening") {
                 Picker(selection: $stt) {
                     Text("Deepgram Nova-3").tag(STT.Provider.deepgram.rawValue)
@@ -70,7 +82,14 @@ struct GeneralSettings: View {
             }
         }
         .formStyle(.grouped)
-        .onAppear { hasDeepgramKey = Keys.deepgram != nil }
+        .onAppear { hasDeepgramKey = Keys.deepgram != nil; hasGemini = Gemini.available }
+    }
+
+    private var answerNote: String {
+        guard answer.hasPrefix("gemini") else { return "Sarvam, India servers. Screenshots go to gemma4." }
+        return hasGemini
+            ? "Vertex AI in Mumbai, thinking minimal. Also reads screenshots. Falls back to Sarvam if it fails."
+            : "Add a Google Cloud key and project ID in API Keys to use it. Sarvam until then."
     }
 
     private var sttNote: String {
@@ -92,6 +111,8 @@ struct KeysSettings: View {
                 KeyRow(title: "Sarvam", hint: "Required: answers and voice", names: Keys.sarvamNames)
                 KeyRow(title: "OpenAI", hint: "Optional: clicking for you", names: Keys.openAINames)
                 KeyRow(title: "Deepgram", hint: "Optional: faster speech recognition", names: Keys.deepgramNames)
+                KeyRow(title: "Google Cloud", hint: "Optional: Gemini answers from Mumbai", names: Keys.vertexNames)
+                ProjectRow()
             } footer: {
                 Text("Saved in your Keychain and used right away. An export in ~/.zshrc works too.")
                     .font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
@@ -146,5 +167,20 @@ struct KeyRow: View {
         text = ""
         reload()
         Log.info(Keys.report().replacingOccurrences(of: "\n", with: " · "))
+    }
+}
+
+/// The Google Cloud project that owns the key (an ID, not a secret, so it's shown and kept in defaults).
+struct ProjectRow: View {
+    @State private var text = UserDefaults.standard.string(forKey: "googleCloudProject") ?? ""
+
+    var body: some View {
+        TextField(text: $text, prompt: Text("my-project-123")) {
+            Text("Google Cloud project ID")
+            Text("Region asia-south1 (Mumbai)").font(.callout).foregroundStyle(.secondary)
+        }
+        .onChange(of: text) { _, v in
+            UserDefaults.standard.set(v.trimmingCharacters(in: .whitespaces), forKey: "googleCloudProject")
+        }
     }
 }
