@@ -256,9 +256,7 @@ final class SpeechFilter: NSObject, SNResultsObserving {
     private var held: [Data] = []       // the last second, not sent
     private var frame: Int64 = 0        // 16 kHz frames seen so far
     private var openUntil: Int64 = -1   // audio before this frame goes straight through
-
-    /// Whether any speech went to the socket.
-    var heardSpeech: Bool { queue.sync { openUntil >= 0 } }
+    private var finished = false
 
     init(send: @escaping (Data) -> Void) {
         self.send = send
@@ -277,31 +275,55 @@ final class SpeechFilter: NSObject, SNResultsObserving {
     /// Each ~100 ms chunk of 16 kHz Int16 mono, from the audio thread.
     func pass(_ chunk: Data) {
         queue.async { [self] in
+            guard !finished else { return }
             let start = frame
-            let n = chunk.count / 2
-            frame += Int64(n)
-            if openUntil != .max, let buf = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(n)) {
-                buf.frameLength = AVAudioFrameCount(n)
-                chunk.withUnsafeBytes { raw in
-                    let src = raw.bindMemory(to: Int16.self)
-                    for i in 0..<n { buf.floatChannelData![0][i] = Float(Int16(littleEndian: src[i])) / 32768 }
-                }
-                analyzer.analyze(buf, atAudioFramePosition: start)
-            }
+            analyze(chunk)
             if start < openUntil { send(chunk); return }
             held.append(chunk)
             if held.count > 10 { held.removeFirst() }
         }
     }
 
+    /// End of the turn, before the socket's own finish: runs after every chunk already passed, classifies
+    /// the last half-second (a whole short ask can fit in it), sends any speech still held, and stops.
+    /// Returns whether any speech went to the socket.
+    func finish() -> Bool {
+        queue.sync {
+            analyze(Data(count: 16000))      // 0.5 s of silence completes the window over the last words
+            finished = true
+            return openUntil >= 0
+        }
+    }
+
+    /// On `queue`. SoundAnalysis reports results synchronously, inside `analyze`.
+    private func analyze(_ chunk: Data) {
+        let start = frame
+        let n = chunk.count / 2
+        frame += Int64(n)
+        guard openUntil != .max, let buf = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(n)) else { return }
+        buf.frameLength = AVAudioFrameCount(n)
+        chunk.withUnsafeBytes { raw in
+            let src = raw.bindMemory(to: Int16.self)
+            for i in 0..<n { buf.floatChannelData![0][i] = Float(Int16(littleEndian: src[i])) / 32768 }
+        }
+        analyzer.analyze(buf, atAudioFramePosition: start)
+    }
+
+    private func open(until frame: Int64) {
+        openUntil = max(openUntil, frame)
+        for h in held { send(h) }
+        held.removeAll()
+    }
+
     func request(_ request: SNRequest, didProduce result: SNResult) {
         guard let c = result as? SNClassificationResult, (c.classification(forIdentifier: "speech")?.confidence ?? 0) > 0.6 else { return }
-        let end = Int64(c.timeRange.end.seconds * 16000)
-        queue.async { [self] in
-            openUntil = max(openUntil, end + 16000)
-            for h in held { send(h) }
-            held.removeAll()
-        }
+        open(until: Int64(c.timeRange.end.seconds * 16000) + 16000)
+    }
+
+    /// A classifier that stops working must not leave the user unheard.
+    func request(_ request: SNRequest, didFailWithError error: Error) {
+        Log.error("speech filter failed: \(error.localizedDescription); sending all audio")
+        open(until: .max)
     }
 }
 
