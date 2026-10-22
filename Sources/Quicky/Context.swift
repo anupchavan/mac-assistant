@@ -22,6 +22,8 @@ struct ScreenContext {
     var captureMs: Double = 0
     var pointer: CGPoint = .zero             // CG coordinates
     var pointerElementFrame: CGRect?
+    /// Every link on the open web page with its real URL, footer included (browsers only).
+    var links: [PageLink] = []
 
     var appIcon: NSImage? {
         guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else { return nil }
@@ -40,7 +42,7 @@ struct ScreenContext {
     }
 
     /// The per-request block, empty lines omitted (prompts.md §2).
-    func block(language: String?, outputMode: String, includeOCR: Bool) -> String {
+    func block(language: String?, outputMode: String, includeOCR: Bool, includeLinks: Bool = false) -> String {
         var lines: [String] = []
         func add(_ k: String, _ v: String, limit: Int = 2000) {
             let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -55,6 +57,7 @@ struct ScreenContext {
         if !browserURL.isEmpty { add("BROWSER", browserTitle.isEmpty ? browserURL : "\(browserURL) — \(browserTitle)") }
         add("VISIBLE_TEXT (truncated)", visibleText, limit: 3000)
         if includeOCR { add("SCREEN_TEXT_OCR (truncated)", ocrText, limit: 4000) }
+        if includeLinks { add("PAGE_LINKS (text | url, whole page)", PageLink.lines(links, pageURL: browserURL), limit: 6000) }
         add("LANGUAGE", language ?? "")
         let f = ISO8601DateFormatter(); f.timeZone = .current; f.formatOptions = [.withInternetDateTime]
         add("NOW", f.string(from: Date()))
@@ -80,14 +83,16 @@ enum ContextCapture {
         let pid = ctx.pid, bundleID = ctx.bundleID
         async let shot = screenshot(pid: pid)
         async let scripted = scriptedContext(bundleID: bundleID)
+        async let links: [PageLink] = PageLink.browsers.contains(bundleID) ? await PageLink.harvest(pid: pid) : []
         readAX(&ctx)
         if let (img, frame) = await shot { ctx.screenshot = img; if ctx.windowFrame == .zero { ctx.windowFrame = frame } }
         let s = await scripted
         ctx.finderSelection = s.finder
         ctx.browserURL = s.url
         ctx.browserTitle = s.title
+        ctx.links = await links
         ctx.captureMs = Date().timeIntervalSince(t0) * 1000
-        Log.info(String(format: "context %@ %.0f ms (shot %@)", ctx.appName, ctx.captureMs, ctx.screenshot == nil ? "no" : "yes"))
+        Log.info(String(format: "context %@ %.0f ms (shot %@, %d links)", ctx.appName, ctx.captureMs, ctx.screenshot == nil ? "no" : "yes", ctx.links.count))
         return ctx
     }
 

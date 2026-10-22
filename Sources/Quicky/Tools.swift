@@ -97,7 +97,7 @@ enum Tools {
         return [
             fn("web_search", "Search the web. Use it for anything current or that you aren't sure of: news, launches and release dates, prices, scores, weather, recent versions, who holds a role now. Returns dated excerpts.",
                ["query": ["type": "string", "description": "A short search query in English, with names spelled out"]], ["query"]),
-            fn("open_url", "Open a URL in the default browser", ["url": s], ["url"]),
+            fn("open_url", "Open a URL in the default browser. To follow a link on the open page, use its exact URL from PAGE_LINKS. Several calls open several tabs.", ["url": s], ["url"]),
             fn("open_app", "Open or focus a Mac app by name", ["name": s], ["name"]),
             fn("reveal_or_open_file", "Open a file, or reveal it in Finder", ["path": s, "reveal": ["type": "boolean"]], ["path"]),
             fn("insert_text", "Insert text into the field the user was focused on", ["text": s], ["text"]),
@@ -114,7 +114,7 @@ enum Tools {
             fn("press_shortcut", "Press a keyboard shortcut in an app (default: the app the user is in). Use it for anything a shortcut does: close this tab cmd+w, new tab cmd+t, reopen closed tab cmd+shift+t, reload cmd+r, go back cmd+[, go forward cmd+], find cmd+f, select all cmd+a, undo cmd+z, redo cmd+shift+z, zoom in cmd+plus, zoom out cmd+minus, full screen ctrl+cmd+f, minimize cmd+m, hide cmd+h, new window cmd+n, close window cmd+shift+w, quit cmd+q, scroll down space or pagedown.",
                ["keys": ["type": "string", "description": "Keys joined with +, e.g. cmd+w, cmd+shift+t, ctrl+cmd+f"],
                 "app": ["type": "string", "description": "App name; omit for the app the user is in"]], ["keys"]),
-            fn("use_computer", "Do something on screen by clicking and typing (an agent that sees the window) when no other tool or shortcut fits, e.g. block or mute a user, toggle a setting, press a button.",
+            fn("use_computer", "Do something on screen by clicking and typing (an agent that sees the window) when no other tool or shortcut fits, e.g. block or mute a user, toggle a setting, press a button. Never for opening a link that is in PAGE_LINKS: use open_url.",
                ["task": ["type": "string", "description": "One clear English instruction naming the exact on-screen target"]], ["task"]),
         ]
     }()
