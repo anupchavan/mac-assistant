@@ -100,6 +100,10 @@ struct ToolCall: Identifiable {
     var statusText: String {
         switch name {
         case "web_search": return "Searching the web for “\(string("query"))”"
+        case _ where ExtensionHost.tool(name) != nil:
+            // "music_now_playing" → "Music: now playing"
+            let (m, t) = ExtensionHost.tool(name)!
+            return "\(m.name): \(t.name.replacingOccurrences(of: "_", with: " "))"
         case "run":
             // The tools the program calls, in order: "Music search → Telegram download".
             let p = string("program")

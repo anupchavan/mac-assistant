@@ -1,7 +1,7 @@
 {
   "id": "music",
   "name": "Music",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Songs, albums, lyrics, credits and what's playing, including soundtracks and songs not on Apple Music in your country.",
   "when": "The user wants to know something about a song, album, artist or soundtrack (who sang it, which film or album it's from, release year, tracklist, credits), wants lyrics, asks what song is playing, or wants a specific song or album found, opened in a music app or downloaded.",
   "cues": [
@@ -263,9 +263,9 @@
       ]
     },
     "now_playing": {
-      "description": "The song playing now in Music or Spotify: title, artist, album, length and position.",
+      "description": "The song in Music or Spotify now, playing or paused: title, artist, album, length, position and state.",
       "effect": "read",
-      "timeoutMs": 2000,
+      "timeoutMs": 3000,
       "input": {
         "type": "object",
         "properties": {}
@@ -292,6 +292,9 @@
             "type": "number"
           },
           "app": {
+            "type": "string"
+          },
+          "state": {
             "type": "string"
           }
         }

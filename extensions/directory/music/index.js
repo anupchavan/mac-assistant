@@ -221,17 +221,21 @@ async function lrclib(q, title, artist, album, seconds) {
 // MARK: now playing (Music, Spotify; only if already open)
 
 async function nowPlaying(q) {
+  let failure
   for (const [app, scale] of [['Music', 1], ['Spotify', 0.001]]) {
+    // "" when the app isn't open (Quicky never launches it) or has no current track.
     const out = await q.applescript(`tell application "${app}"
-      if player state is not playing then return ""
+      if player state is stopped then return ""
       set t to current track
-      return (name of t) & tab & (artist of t) & tab & (album of t) & tab & (duration of t) & tab & player position
-    end tell`).catch(() => '')
+      return (player state as text) & tab & (name of t) & tab & (artist of t) & tab & (album of t) & tab & (duration of t) & tab & player position
+    end tell`).catch(e => { failure = e; return '' })
     const f = out.split('\t')
-    if (f.length !== 5) continue
+    if (f.length !== 6) continue
     const num = s => Number(String(s).replace(',', '.')) || 0
-    return { playing: true, title: f[0], artists: f[1], album: f[2], seconds: num(f[3]) * scale, position: num(f[4]), app }
+    return { playing: f[0] === 'playing', state: f[0], title: f[1], artists: f[2], album: f[3],
+             seconds: num(f[4]) * scale, position: num(f[5]), app }
   }
+  if (failure) throw failure    // e.g. Automation not allowed: say so, don't pretend nothing is playing
   return null
 }
 
@@ -316,7 +320,7 @@ exports.lyrics = async ({ title, artist, album, seconds }, q) => {
   return null
 }
 
-exports.now_playing = async (_, q) => (await nowPlaying(q)) || { playing: false }
+exports.now_playing = async (_, q) => (await nowPlaying(q)) || { playing: false, state: 'nothing open in Music or Spotify' }
 
 exports.credits = async ({ title, artist }, q) => {
   // Artist as loose words, not a quoted phrase: "A.R. Rahman" is "A. R. Rahman" in MusicBrainz.

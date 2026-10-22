@@ -17,6 +17,7 @@ final class SettingsWindow {
             tabs.transitionOptions = []
             tabs.addTabViewItem(Self.tab("General", symbol: "gearshape", GeneralSettings()))
             tabs.addTabViewItem(Self.tab("Shortcuts", symbol: "command", ShortcutsSettings { [weak self] in self?.onShortcutsChanged?() }))
+            tabs.addTabViewItem(Self.tab("Extensions", symbol: "puzzlepiece.extension", ExtensionsSettings()))
             tabs.addTabViewItem(Self.tab("API Keys", symbol: "key", KeysSettings()))
             let w = NSWindow(contentViewController: tabs)
             w.styleMask = [.titled, .closable]
@@ -281,6 +282,75 @@ struct KeyCap: View {
             .padding(.horizontal, 6)
             .frame(minWidth: 22, minHeight: 22, maxHeight: 22)
             .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(.secondary.opacity(0.5), lineWidth: 0.5))
+    }
+}
+
+// MARK: - Extensions
+
+/// What Quicky can do beyond its core tools (docs/extensions.md). Built-in ones ship with the app and can
+/// only be turned off; local ones are folders installed with `Quicky --extension install`.
+struct ExtensionsSettings: View {
+    @State private var all: [ExtensionManifest] = []
+    @State private var off = Set(UserDefaults.standard.stringArray(forKey: "disabledExtensions") ?? [])
+
+    var body: some View {
+        Form {
+            let core = all.filter(\.core), local = all.filter { !$0.core }
+            if !core.isEmpty {
+                Section("Built in") { ForEach(core, id: \.id) { row($0) } }
+            }
+            Section {
+                if local.isEmpty {
+                    Text("None yet").foregroundStyle(.secondary)
+                } else {
+                    ForEach(local, id: \.id) { row($0) }
+                }
+            } header: {
+                Text("Local")
+            } footer: {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Add a folder with Quicky --extension install <folder>. It's linked, so edits apply on the next ask.")
+                    HStack {
+                        Button("Show Folder") { NSWorkspace.shared.open(ExtensionHost.installDir) }
+                        Button("Reload") { ExtensionHost.load(); reload() }
+                    }
+                }
+                .font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear(perform: reload)
+    }
+
+    private func row(_ m: ExtensionManifest) -> some View {
+        let on = Binding(get: { !off.contains(m.id) }, set: { v in
+            ExtensionHost.setEnabled(m.id, v)
+            if v { off.remove(m.id) } else { off.insert(m.id) }
+        })
+        return Toggle(isOn: on) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(m.name)
+                    Text(m.version).font(.caption).foregroundStyle(.tertiary)
+                }
+                Text(m.description).font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Text(m.tools.map(\.fullName).joined(separator: " · "))
+                    .font(.caption.monospaced()).foregroundStyle(.tertiary).lineLimit(2)
+                if !m.core {
+                    Button(m.dir.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+                        NSWorkspace.shared.activateFileViewerSelecting([m.dir])
+                    }
+                    .buttonStyle(.link).font(.caption).lineLimit(1).truncationMode(.middle)
+                }
+            }
+        }
+        .toggleStyle(.switch)
+        .padding(.vertical, 2)
+    }
+
+    private func reload() {
+        all = ExtensionHost.all
+        off = Set(UserDefaults.standard.stringArray(forKey: "disabledExtensions") ?? [])
     }
 }
 

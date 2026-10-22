@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CryptoKit
 import Foundation
 import JavaScriptCore
@@ -65,7 +66,7 @@ final class JSExtension: @unchecked Sendable {
         return try await withCheckedThrowingContinuation { (c: CheckedContinuation<Any, Error>) in
             let once = Once(c)
             // The timer runs off the extension's queue, so a call that blocks that queue still times out.
-            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(timeoutMs)) { once.finish(.failure(JSError("timed out after \(timeoutMs) ms"))) }
+            JSBridge.after(.milliseconds(timeoutMs), unlessWaitingOn: manifest.id) { once.finish(.failure(JSError("timed out after \(timeoutMs) ms"))) }
             queue.async { [ctx] in
                 let ok: @convention(block) (JSValue) -> Void = { v in once.finish(.success(JSBridge.parse(v.toString()))) }
                 let fail: @convention(block) (JSValue) -> Void = { e in once.finish(.failure(JSError(e.toString()))) }
@@ -224,11 +225,28 @@ enum JSBridge {
             // One answer per call: the script's, or a timeout (an Automation prompt or a hung app can block for minutes).
             let answered = Locked(false)
             func answer(_ f: @escaping () -> Void) { if !answered.swap(true) { queue.async(execute: f) } }
-            DispatchQueue.global().asyncAfter(deadline: .now() + 3) { answer { fail.call(withArguments: ["AppleScript took over 3 s (is Automation allowed for Quicky?)"]) } }
+            after(.seconds(3), unlessWaitingOn: m.id) { answer { fail.call(withArguments: ["AppleScript took over 3 s"]) } }
             scriptQueue.async {
                 // Never launch an app just to ask it something.
-                let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.localizedName))
-                guard apps.allSatisfy(running.contains) else { return answer { ok.call(withArguments: [""]) } }
+                let running = NSWorkspace.shared.runningApplications
+                let targets = apps.compactMap { name in running.first { $0.localizedName == name } }
+                guard targets.count == apps.count else { return answer { ok.call(withArguments: [""]) } }
+                // First use: macOS asks the user whether Quicky may control the app, and this blocks until they
+                // answer. Timeouts wait for them; then the script runs and the ask carries on.
+                for app in targets {
+                    guard let bid = app.bundleIdentifier, let name = app.localizedName else { continue }
+                    var consent = automationConsent(bid, ask: false)
+                    if consent == errAEEventWouldRequireUserConsent {
+                        Log.info("[\(m.id)] asking for Automation permission to control \(name)")
+                        waitingForUser.value.insert(m.id)
+                        consent = automationConsent(bid, ask: true)
+                        waitingForUser.value.remove(m.id)
+                        Log.info("[\(m.id)] Automation for \(name): \(consent == noErr ? "allowed" : "not allowed (\(consent))")")
+                    }
+                    if consent == errAEEventNotPermitted {
+                        return answer { fail.call(withArguments: ["Quicky isn't allowed to control \(name). Allow it in System Settings → Privacy & Security → Automation → Quicky."]) }
+                    }
+                }
                 var err: NSDictionary?
                 let out = NSAppleScript(source: src)?.executeAndReturnError(&err).stringValue
                 answer {
@@ -243,6 +261,25 @@ enum JSBridge {
     }
 
     static let scriptQueue = DispatchQueue(label: "quicky.applescript")
+
+    /// Extensions whose call is waiting on the user (a macOS permission prompt); their timeouts hold until it's answered.
+    static let waitingForUser = Locked<Set<String>>([])
+
+    /// Runs `f` after `delay`, or later if `id` is waiting on the user by then.
+    static func after(_ delay: DispatchTimeInterval, unlessWaitingOn id: String, _ f: @escaping () -> Void) {
+        DispatchQueue.global().asyncAfter(deadline: .now() + delay) {
+            if id == "*" ? !waitingForUser.value.isEmpty : waitingForUser.value.contains(id) { after(.milliseconds(300), unlessWaitingOn: id, f) } else { f() }
+        }
+    }
+
+    /// noErr, errAEEventNotPermitted (denied) or errAEEventWouldRequireUserConsent (not asked yet).
+    static func automationConsent(_ bundleID: String, ask: Bool) -> OSStatus {
+        var desc = AEAddressDesc()
+        let bytes = Array(bundleID.utf8)
+        guard AECreateDesc(DescType(typeApplicationBundleID), bytes, bytes.count, &desc) == noErr else { return OSStatus(noErr) }
+        defer { AEDisposeDesc(&desc) }
+        return AEDeterminePermissionToAutomateTarget(&desc, AEEventClass(typeWildCard), AEEventID(typeWildCard), ask)
+    }
 
     /// The apps an AppleScript talks to: `tell application "Music"`, `application id …` isn't allowed.
     static func appNames(in src: String) -> Set<String> {
@@ -339,7 +376,7 @@ enum Composer {
         do {
             out = try await withCheckedThrowingContinuation { (c: CheckedContinuation<String, Error>) in
                 let once = Once(c)
-                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { once.finish(.failure(JSError("the program ran over \(Int(timeout)) s"))) }
+                JSBridge.after(.seconds(Int(timeout)), unlessWaitingOn: "*") { once.finish(.failure(JSError("the program ran over \(Int(timeout)) s"))) }
                 queue.async {
                     let ctx = JSContext(virtualMachine: JSVirtualMachine())!
                     ctx.name = "Quicky · run"
