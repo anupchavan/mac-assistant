@@ -69,6 +69,7 @@ struct ToolCall: Identifiable {
     /// Status line while running ("Adding to Calendar").
     var statusText: String {
         switch name {
+        case "web_search": return "Searching the web for “\(string("query"))”"
         case "open_url": return "Opening \(URL(string: string("url"))?.host ?? "the link")"
         case "open_app": return "Opening \(string("name"))"
         case "reveal_or_open_file": return "Opening \((string("path") as NSString).lastPathComponent)"
@@ -94,6 +95,8 @@ enum Tools {
         }
         let s: [String: Any] = ["type": "string"]
         return [
+            fn("web_search", "Search the web. Use it for anything current or that you aren't sure of: news, launches and release dates, prices, scores, weather, recent versions, who holds a role now. Returns dated excerpts.",
+               ["query": ["type": "string", "description": "A short search query in English, with names spelled out"]], ["query"]),
             fn("open_url", "Open a URL in the default browser", ["url": s], ["url"]),
             fn("open_app", "Open or focus a Mac app by name", ["name": s], ["name"]),
             fn("reveal_or_open_file", "Open a file, or reveal it in Finder", ["path": s, "reveal": ["type": "boolean"]], ["path"]),
@@ -158,6 +161,8 @@ enum Tools {
     static func run(_ call: ToolCall, insertInto pid: pid_t?) async -> String {
         do {
             switch call.name {
+            case "web_search":
+                return await WebSearch.run(query: call.string("query"))
             case "open_url":
                 guard let url = URL(string: call.string("url")) else { return "error: bad url" }
                 await MainActor.run { _ = NSWorkspace.shared.open(url) }

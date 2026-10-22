@@ -98,6 +98,19 @@ final class RouterTests: XCTestCase {
         XCTAssertTrue(Router.looksAtScreen("ఈ ఫైల్ దేని గురించి?"))
         XCTAssertTrue(Router.looksAtScreen("what's the error"))
     }
+    func testFreshCues() {
+        XCTAssertTrue(Router.wantsFresh("When is Sarvam AI's one trillion parameter model releasing?"))
+        XCTAssertTrue(Router.wantsFresh("what's the weather tomorrow"))
+        XCTAssertFalse(Router.wantsFresh("what does this mean"))
+    }
+    func testSearchParsing() {
+        let parallel: [String: Any] = ["results": [["url": "https://a.com/x", "title": "A", "publish_date": "2026-10-01", "excerpts": ["one", "two"]]]]
+        XCTAssertEqual(WebSearch.parse(.parallel, parallel).first?.text, "one … two")
+        let brave: [String: Any] = ["web": ["results": [["url": "https://b.com", "title": "B", "description": "d", "extra_snippets": ["e"]]]]]
+        XCTAssertEqual(WebSearch.parse(.brave, brave).first?.text, "d … e")
+        let exa: [String: Any] = ["results": [["url": "https://c.com", "title": "C", "highlights": ["h"]]]]
+        XCTAssertEqual(WebSearch.parse(.exa, exa).first?.title, "C")
+    }
     func testSpeechCleaning() {
         XCTAssertEqual(AppModel.cleanForSpeech("**Bold** see https://x.com/a now"), "Bold see the link now")
     }
