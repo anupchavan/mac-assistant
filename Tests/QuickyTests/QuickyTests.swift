@@ -315,3 +315,17 @@ final class WrongShortcutTests: XCTestCase {
         XCTAssertEqual(AppModel.localReply([w], results: ["pressed"], saidAlready: false, language: nil, ask: "close this"), "")
     }
 }
+
+final class ControlLabelTests: XCTestCase {
+    func testTidy() {
+        XCTAssertEqual(Controls.tidy("Following Down Chevron Icon"), "Following ▾")
+        XCTAssertEqual(Controls.tidy("Settings Icon"), "Settings")
+        XCTAssertEqual(Controls.tidy("Icon"), "Icon")
+        XCTAssertEqual(Controls.tidy("Follow"), "Follow")
+    }
+    func testNextStep() {
+        XCTAssertTrue(Controls.needsNextStep("pressed button “More”" + Controls.unchangedMarker))
+        XCTAssertTrue(Controls.needsNextStep("pressed button “Following ▾”" + Controls.openedMarker + "41 | button | Unfollow"))
+        XCTAssertFalse(Controls.needsNextStep("pressed button “Follow”"))
+    }
+}

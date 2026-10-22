@@ -15,6 +15,8 @@ struct Control {
     var line: String { "\(id) | \(role) | \(label)\(state.isEmpty ? "" : " (\(state))")" }
     /// Identity across two reads of the window (ids are renumbered every read).
     var key: String { "\(role)|\(label)|\(state)" }
+    /// Same control in a later read of the window: kind, label and position (state may flip).
+    var slot: String { "\(role)|\(label)|\(frame.map { "\(Int($0.minX / 4)),\(Int($0.minY / 4))" } ?? "")" }
 
     /// Pressing these changes something for good or for other people, so the confirm card asks first.
     var consequential: Bool {
@@ -37,7 +39,11 @@ enum Controls {
 
     /// Visible controls of the focused window in reading order: native ones by a bounded walk, a web page's
     /// through WebKit/Chromium's control search (one call). Gives up quietly at the deadline.
-    static func harvest(pid: pid_t, deadline seconds: TimeInterval = 0.15, limit: Int = 120) async -> [Control] {
+    /// Ids handed out this turn, by slot, so a control keeps its number across the re-reads after a press
+    /// and the model's earlier CONTROLS list stays valid. A fresh capture (a new ask) starts over.
+    private static let ids = Locked<(map: [String: Int], next: Int)>(([:], 1))
+
+    static func harvest(pid: pid_t, deadline seconds: TimeInterval = 0.15, limit: Int = 120, keepIds: Bool = false) async -> [Control] {
         await Task.detached(priority: .userInitiated) { () -> [Control] in
             guard AXIsProcessTrusted() else { return [] }
             let t0 = Date()
@@ -109,16 +115,36 @@ enum Controls {
                 // Hidden parts (a closed find bar) still sit in the tree with no size.
                 let frame = ContextCapture.frame(of: el)
                 if let f = frame, f.width < 1 || f.height < 1 { continue }
-                label = String(label.replacingOccurrences(of: "\n", with: " ").prefix(60))
+                label = tidy(String(label.replacingOccurrences(of: "\n", with: " ").prefix(60)))
                 var state = ""
                 if ["checkbox", "switch", "toggle", "radio"].contains(role), let n = v[3] as? NSNumber { state = n.intValue == 0 ? "off" : "on" }
                 guard keys.insert("\(kind)|\(label)|\(frame.map { "\(Int($0.minX)),\(Int($0.minY))" } ?? "")").inserted else { continue }
-                controls.append(Control(id: controls.count + 1, role: kind, label: label, state: state, element: el, frame: frame))
+                controls.append(Control(id: 0, role: kind, label: label, state: state, element: el, frame: frame))
             }
+            var table = keepIds ? ids.value : ([:], 1)
+            var used = Set<Int>()
+            controls = controls.map { c in
+                var id = table.map[c.slot] ?? 0
+                if id == 0 || used.contains(id) { id = table.next; table.next += 1; table.map[c.slot] = id }
+                used.insert(id)
+                return Control(id: id, role: c.role, label: c.label, state: c.state, element: c.element, frame: c.frame)
+            }
+            ids.value = table
             latest.value = Dictionary(uniqueKeysWithValues: controls.map { ($0.id, $0) })
             Log.info(String(format: "controls %d (of %d found) in %.0f ms", controls.count, found.count, Date().timeIntervalSince(t0) * 1000))
             return controls
         }.value
+    }
+
+    /// Web apps name buttons after their icons: "Following Down Chevron Icon" is really "Following ▾",
+    /// a button that opens a menu. Strip the icon words and keep the hint.
+    static func tidy(_ label: String) -> String {
+        let iconWords = #"(?i)(\s+(down|up|drop-?down|chevron|caret|arrow|icon|svg|glyph))+\s*$"#
+        guard let r = label.range(of: iconWords, options: .regularExpression) else { return label }
+        let tail = label[r].lowercased()
+        let base = String(label[..<r.lowerBound]).trimmingCharacters(in: .whitespaces)
+        guard !base.isEmpty else { return label }
+        return tail.contains("chevron") || tail.contains("caret") || tail.contains("down") || tail.contains("drop") ? base + " ▾" : base
     }
 
     /// Icon buttons often carry their name on a child ("Follow" text inside the button).
@@ -136,13 +162,19 @@ enum Controls {
     /// Marker in a press result: what follows is a menu or dialog the press opened, for the model's next step.
     static let openedMarker = "\nIT OPENED (press one of these next if the ask needs it):\n"
     static let unchangedMarker = ", but nothing on screen changed"
+    static let closedMarker = "\nIT CLOSED (these went away): "
+    /// Results that mean the ask may not be done yet: the model gets another step to look and try again.
+    static func needsNextStep(_ result: String) -> Bool {
+        result.contains(openedMarker) || result.hasSuffix(unchangedMarker) || result.contains(closedMarker)
+    }
 
     /// AXPress first; a real click at the centre only if the element won't take it. Then the window is read
     /// again, so the result says what the press did: opened a menu or dialog (listed, for a second press like
     /// Instagram's Following → Unfollow), changed the screen, or changed nothing.
     static func press(_ id: Int, pid: pid_t?) async -> String {
         guard let c = latest.value[id] else { return "error: no control \(id) on screen now" }
-        let before = Set(latest.value.values.map(\.key))
+        let beforeControls = Array(latest.value.values)
+        let before = Set(beforeControls.map(\.key))
         AXUIElementSetMessagingTimeout(c.element, 0.3)
         var did = "pressed \(c.role) “\(c.label)”"
         if AXUIElementPerformAction(c.element, kAXPressAction as CFString) != .success {
@@ -156,12 +188,15 @@ enum Controls {
         var fresh: [Control] = []
         for wait in [250, 350] as [UInt64] {
             try? await Task.sleep(nanoseconds: wait * 1_000_000)
-            let after = await harvest(pid: pid)
+            let after = await harvest(pid: pid, keepIds: true)
             fresh = after.filter { !before.contains($0.key) }
             if !fresh.isEmpty || !after.contains(where: { $0.key == c.key }) { break }
         }
-        if fresh.isEmpty && latest.value.values.contains(where: { $0.key == c.key }) { return did + unchangedMarker }
+        let nowKeys = Set(latest.value.values.map(\.key))
+        let gone = beforeControls.filter { !nowKeys.contains($0.key) && $0.key != c.key }
         if let opened = openedSurface(fresh, pressed: c) { return did + openedMarker + lines(opened, max: 30) }
+        if fresh.isEmpty && gone.isEmpty && nowKeys.contains(c.key) { return did + unchangedMarker }
+        if fresh.isEmpty && !gone.isEmpty { return did + closedMarker + gone.prefix(12).map { "“\($0.label)”" }.joined(separator: ", ") }
         return did
     }
 

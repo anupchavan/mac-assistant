@@ -90,6 +90,7 @@ final class AppModel: ObservableObject {
     private var turnStart = Date()
     private var firstAudioLogged = true
     private var lastWarm = Date.distantPast
+    private var actionFailedThisTurn = false   // a tool erred or changed nothing; never end such a turn in silence
     private var visionAvailable: Bool {
         get { UserDefaults.standard.object(forKey: "visionAvailable") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "visionAvailable") }
@@ -355,6 +356,7 @@ final class AppModel: ObservableObject {
         notice = nil
         answerStarted = false
         toolRanThisTurn = false
+        actionFailedThisTurn = false
         busy = true
         steps = []
         let t0 = Date()
@@ -391,6 +393,11 @@ final class AppModel: ObservableObject {
             do {
                 if route == .computer { try await runComputer(ask: ask, ctx: ctx, language: language, voice: voice) }
                 else { try await answer(ask: ask, ctx: ctx, route: route, language: language, voice: voice) }
+                if actionFailedThisTurn, chats[chatIndex].turns.last?.answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? false {
+                    if voice && (tts == nil || ttsFinalReceived) { startTTS(language: language) }
+                    appendAnswer("That didn't work.", voice: voice)
+                    if voice { flushTTS() }
+                }
                 Log.time("turn total", since: t0)
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
             } catch is CancellationError {
@@ -597,11 +604,12 @@ final class AppModel: ObservableObject {
             }
         }
         guard let first = ordered.first?.value, !first.name.isEmpty else { return }
-        Log.time("tool call \(first.name) from \(model)", since: t0)
+        Log.time("tool call \(first.name) \(first.args.prefix(160)) from \(model)\(hop > 0 ? " (step \(hop + 1))" : "")", since: t0)
         func toolCall(_ i: Int, _ c: (id: String, name: String, args: String)) -> ToolCall {
             let a = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any]) ?? [:]
             return ToolCall(id: c.id.isEmpty ? "call_\(i)" : c.id, name: c.name, arguments: a, rawArguments: c.args)
         }
+        if first.name == "press", let c = Controls.latest.value[Controls.id(toolCall(0, first))] { Log.info("press target: \(c.line)") }
         func followUp(_ ran: [ToolCall], _ results: [String], maxTokens: Int, choice: String = "none") async throws {
             var f = messages
             f.append(["role": "assistant", "content": assistantText,
@@ -689,6 +697,7 @@ final class AppModel: ObservableObject {
         }
         Log.time("tool \(call.name) ×\(batch.count) ran → \(results.joined(separator: ", ").prefix(120))", since: tr)
         if call.name == "insert_text", !results[0].hasPrefix("error") { hide(); return }
+        actionFailedThisTurn = results.contains { $0.hasPrefix("error") || $0.hasSuffix(Controls.unchangedMarker) }
         // So a later "close them", "undo that" or "open it again" can see what this turn actually did.
         if call.name == "open_url" {
             noteOnTurn("Quicky did: opened tabs " + batch.map { $0.string("url") }.joined(separator: " "))
@@ -698,8 +707,8 @@ final class AppModel: ObservableObject {
 
         // The press opened a menu or dialog (Following → Unfollow): one more model step with what opened,
         // tools allowed, so it can press the item the ask was really about. At most three steps.
-        if call.name == "press", results[0].contains(Controls.openedMarker), hop < 3 {
-            Log.time("press opened a menu/dialog; next step", since: t0)
+        if call.name == "press", Controls.needsNextStep(results[0]), hop < 3 {
+            Log.time("press not done yet (\(results[0].contains(Controls.openedMarker) ? "opened" : results[0].contains(Controls.closedMarker) ? "closed" : "no change")); step \(hop + 2)", since: t0)
             try await followUp(batch, results, maxTokens: 300, choice: "auto")
             return
         }
@@ -730,7 +739,7 @@ final class AppModel: ObservableObject {
     /// and "Pressed Follow" would only read the UI back. Data the user can't see (a file moved, an event
     /// added) gets one short line.
     nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?, ask: String? = nil) -> String? {
-        guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") || $0.hasSuffix(Controls.unchangedMarker) }) else { return nil }
+        guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") || Controls.needsNextStep($0) }) else { return nil }
         if ["open_url", "open_app", "press_shortcut", "press", "type_text", "reveal_or_open_file"].contains(first.name) {
             // An unnamed shortcut is the one visible action worth naming: it may have been a wrong guess.
             if first.name == "press_shortcut", !saidAlready {
