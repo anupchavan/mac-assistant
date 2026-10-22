@@ -71,6 +71,9 @@ struct ToolCall: Identifiable {
         switch name {
         case "web_search": return "Searching the web for “\(string("query"))”"
         case "open_url": return "Opening \(URL(string: string("url"))?.host ?? "the link")"
+        case "close_tabs":
+            let n = (arguments["urls"] as? [String])?.count ?? 0
+            return "Closing \(n) tab\(n == 1 ? "" : "s")"
         case "open_app": return "Opening \(string("name"))"
         case "reveal_or_open_file": return "Opening \((string("path") as NSString).lastPathComponent)"
         case "copy_to_clipboard": return "Copying"
@@ -98,7 +101,9 @@ enum Tools {
             fn("web_search", "Search the web. Use it for anything current or that you aren't sure of: news, launches and release dates, prices, scores, weather, recent versions, who holds a role now. Returns dated excerpts.",
                ["query": ["type": "string", "description": "A short search query in English, with names spelled out"]], ["query"]),
             fn("open_url", "Open a URL in the default browser. To follow a link on the open page, use its exact URL from PAGE_LINKS. Several calls open several tabs.", ["url": s], ["url"]),
-            fn("open_app", "Open or focus a Mac app by name", ["name": s], ["name"]),
+            fn("close_tabs", "Close browser tabs by URL, in any window. Use it for \"close them\" or \"close the Instagram tab\": pass the URLs of the tabs (from the history of what you opened, or BROWSER). A URL also matches pages under it. Returns which tabs it actually closed.",
+               ["urls": ["type": "array", "items": s]], ["urls"]),
+                        fn("open_app", "Open or focus a Mac app by name", ["name": s], ["name"]),
             fn("reveal_or_open_file", "Open a file, or reveal it in Finder", ["path": s, "reveal": ["type": "boolean"]], ["path"]),
             fn("insert_text", "Insert text into the field the user was focused on", ["text": s], ["text"]),
             fn("copy_to_clipboard", "Copy text to the clipboard", ["text": s], ["text"]),
@@ -167,6 +172,8 @@ enum Tools {
                 guard let url = URL(string: call.string("url")) else { return "error: bad url" }
                 await MainActor.run { _ = NSWorkspace.shared.open(url) }
                 return "opened"
+            case "close_tabs":
+                return await BrowserTabs.close(matching: (call.arguments["urls"] as? [String]) ?? [], frontPid: pid)
             case "open_app":
                 let name = call.string("name")
                 let p = Process()
