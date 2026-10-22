@@ -62,6 +62,10 @@ enum Anthropic {
                     var json: [Int: String] = [:]
                     var callOf: [Int: Int] = [:]     // block index → tool call index
                     var said = false
+                    func append(_ i: Int, _ key: String, _ s: String) {
+                        let old = blocks[i]?[key] as? String ?? ""
+                        blocks[i]?[key] = old + s
+                    }
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
                         guard line.hasPrefix("data:"),
@@ -84,14 +88,14 @@ enum Anthropic {
                             switch delta["type"] as? String {
                             case "text_delta":
                                 let t = delta["text"] as? String ?? ""
-                                blocks[i]?["text"] = (blocks[i]?["text"] as? String ?? "") + t
+                                append(i, "text", t)
                                 if !t.isEmpty { said = true; cont.yield(.text(t)) }
                             case "thinking_delta":
                                 let t = delta["thinking"] as? String ?? ""
-                                blocks[i]?["thinking"] = (blocks[i]?["thinking"] as? String ?? "") + t
+                                append(i, "thinking", t)
                                 if !t.isEmpty { cont.yield(.reasoning(t)) }
                             case "signature_delta":
-                                blocks[i]?["signature"] = (blocks[i]?["signature"] as? String ?? "") + (delta["signature"] as? String ?? "")
+                                append(i, "signature", delta["signature"] as? String ?? "")
                             case "input_json_delta":
                                 let p = delta["partial_json"] as? String ?? ""
                                 json[i, default: ""] += p
