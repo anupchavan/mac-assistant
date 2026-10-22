@@ -728,7 +728,8 @@ final class AppModel: ObservableObject {
             let host = PageLink.host(first.string("url"))
             return host.isEmpty ? "Opened it." : "Opened \(host)."
         case "open_app": return "Opened \(first.string("name"))."
-        case "press_shortcut": return Reflex.reply(forKeys: first.string("keys")) ?? "Done."
+        // A shortcut we can't name gets named by its keys, never a bare "Done." that hides a wrong guess.
+        case "press_shortcut": return Reflex.reply(forKeys: first.string("keys")) ?? "Pressed \(Tools.symbols(first.string("keys")))."
         case "copy_to_clipboard": return "Copied."
         case "press": return "Pressed \(Controls.label(from: results[0]) ?? "it")."
         case "type_text": return first.arguments["submit"] as? Bool == false ? "Typed it." : "Done."
