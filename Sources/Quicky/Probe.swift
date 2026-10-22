@@ -47,7 +47,7 @@ enum Probe {
             let q = rest.first ?? "Say hello in Hindi in five words."
             let t0 = Date()
             var first: Date?
-            for try await e in SarvamChat.stream(model: Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b"), version: .v1,
+            for try await e in SarvamChat.stream(model: Gemini.answerModel, version: .v1,
                                                  messages: [["role": "system", "content": Prompts.system], ["role": "user", "content": "OUTPUT_MODE: typed\n\nASK: \(q)"]],
                                                  reasoning: nil, maxTokens: 600) {
                 if case let .text(t) = e { if first == nil { first = Date() }; print(t, terminator: ""); fflush(stdout) }
