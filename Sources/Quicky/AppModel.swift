@@ -726,7 +726,7 @@ final class AppModel: ObservableObject {
         actionFailedThisTurn = results.contains { $0.hasPrefix("error") || $0.hasSuffix(Controls.unchangedMarker) }
         // So a later "close them", "undo that" or "open it again" can see what this turn actually did.
         if call.name == "open_url" {
-            noteOnTurn("Quicky did: opened tabs " + batch.map { $0.string("url") }.joined(separator: " "))
+            noteOnTurn("Quicky did: opened tabs " + batch.flatMap(\.urlList).joined(separator: " "))
         } else if !results[0].hasPrefix("error") {
             noteOnTurn("Quicky did: \(call.name) \(call.rawArguments.prefix(200)) → \(results[0].prefix(120))")
         }

@@ -9,6 +9,11 @@ struct ToolCall: Identifiable {
 
     func string(_ k: String) -> String { arguments[k] as? String ?? "" }
 
+    /// open_url's links: "url", plus "urls" when a model sends a list.
+    var urlList: [String] {
+        ([string("url")] + ((arguments["urls"] as? [String]) ?? [])).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
     /// Needs a confirm card before running (changes or creates data, or a shortcut that can lose work).
     var needsConfirm: Bool {
         if name == "press_shortcut" { return Tools.isDestructive(shortcut: string("keys")) }
@@ -81,7 +86,9 @@ struct ToolCall: Identifiable {
     var statusText: String {
         switch name {
         case "web_search": return "Searching the web for “\(string("query"))”"
-        case "open_url": return "Opening \(URL(string: string("url"))?.host ?? "the link")"
+        case "open_url":
+            let list = urlList
+            return list.count > 1 ? "Opening \(list.count) links" : "Opening \(URL(string: list.first ?? "")?.host ?? "the link")"
         case "press": return "Pressing “\(Controls.latest.value[Controls.id(self)]?.label ?? "it")”"
         case "type_text": return "Typing “\(string("text"))”"
         case "close_tabs":
@@ -187,9 +194,11 @@ enum Tools {
             case "web_search":
                 return await WebSearch.run(query: call.string("query"))
             case "open_url":
-                guard let url = URL(string: call.string("url")) else { return "error: bad url" }
-                await MainActor.run { _ = NSWorkspace.shared.open(url) }
-                return "opened"
+                // Some models pass {"urls": [...]} (close_tabs' shape); open those too rather than fail.
+                let urls = call.urlList.compactMap { URL(string: $0) }.filter { $0.scheme != nil }
+                guard !urls.isEmpty else { return "error: bad url (pass one full https URL as \"url\"; call open_url once per link)" }
+                await MainActor.run { for u in urls.prefix(5) { _ = NSWorkspace.shared.open(u) } }
+                return urls.count == 1 ? "opened" : "opened \(min(urls.count, 5)) tabs"
             case "press":
                 return await Controls.press(Controls.id(call), pid: pid)
             case "type_text":

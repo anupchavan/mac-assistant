@@ -328,3 +328,13 @@ final class NotSetTests: XCTestCase {
         XCTAssertNil(Controls.notSetReply(ask: "unsubscribe", label: "Subscribed"))
     }
 }
+
+final class OpenURLArgsTests: XCTestCase {
+    func testURLListAcceptsBothShapes() {
+        let one = ToolCall(id: "a", name: "open_url", arguments: ["url": "https://nasa.gov"], rawArguments: "")
+        let many = ToolCall(id: "b", name: "open_url", arguments: ["urls": ["https://instagram.com/natgeo", " https://instagram.com/nasa "]], rawArguments: "")
+        XCTAssertEqual(one.urlList, ["https://nasa.gov"])
+        XCTAssertEqual(many.urlList, ["https://instagram.com/natgeo", "https://instagram.com/nasa"])
+        XCTAssertEqual(many.statusText, "Opening 2 links")
+    }
+}
