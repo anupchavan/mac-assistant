@@ -169,6 +169,13 @@ enum Tools {
                 return "opened"
             case "open_app":
                 let name = call.string("name")
+                // Straight through LaunchServices when we know the bundle: no `open` process to spawn.
+                if let app = AppIndex.lookup(name) {
+                    let cfg = NSWorkspace.OpenConfiguration()
+                    cfg.activates = true
+                    await MainActor.run { FocusMove.begin() }
+                    if (try? await NSWorkspace.shared.openApplication(at: app.url, configuration: cfg)) != nil { return "opened \(app.name)" }
+                }
                 let p = Process()
                 p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
                 p.arguments = ["-a", name]
@@ -196,8 +203,15 @@ enum Tools {
                 let app = name.isEmpty ? pid.flatMap { NSRunningApplication(processIdentifier: $0) }
                     : NSWorkspace.shared.runningApplications.first { ($0.localizedName ?? "").caseInsensitiveCompare(name) == .orderedSame }
                 guard let app else { return "error: \(name.isEmpty ? "no app to send it to" : "\(name) isn't running")" }
-                await MainActor.run { FocusMove.begin(); app.activate() }
-                try? await Task.sleep(nanoseconds: 150_000_000)
+                // Already in front (the usual case: the panel doesn't take activation) → press at once.
+                // Otherwise bring it forward and wait only until it actually is, at most 300 ms.
+                if NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
+                    await MainActor.run { FocusMove.begin(); app.activate() }
+                    for _ in 0..<30 where NSWorkspace.shared.frontmostApplication?.processIdentifier != app.processIdentifier {
+                        try? await Task.sleep(nanoseconds: 10_000_000)
+                    }
+                    try? await Task.sleep(nanoseconds: 30_000_000)
+                }
                 let sent = ComputerUser.pressKeys(keys, src: HotkeyMonitor.syntheticSource(.combinedSessionState), toPid: app.processIdentifier)
                 return sent ? "pressed \(call.string("keys")) in \(app.localizedName ?? "the app")" : "error: unknown key in \(call.string("keys"))"
             case "create_event":

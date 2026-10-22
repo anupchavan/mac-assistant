@@ -27,6 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Fonts.register()
+        DispatchQueue.global(qos: .utility).async { AppIndex.load() }
         model = AppModel()
         controller = PanelController(model: model)
         model.controller = controller

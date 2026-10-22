@@ -11,6 +11,7 @@ import SwiftUI
 ///   Quicky --probe tts "namaste" [hi-IN]       (Bulbul socket, plays it, prints first-audio latency)
 ///   Quicky --probe stt [seconds]               (records from the mic, realtime STT, prints the transcript)
 ///   Quicky --probe route "block this user"
+///   Quicky --probe reflex "close this tab"     (the no-model fast path: prints the tool call it would make, never runs it)
 ///   Quicky --probe handoff "block this user"   (computer-use instruction only; never clicks)
 ///   Quicky --probe render <dir>                (offscreen PNGs of the panel states; nothing appears on screen)
 ///   Quicky --probe gesture                     (replays fn timelines through the state machine)
@@ -32,6 +33,14 @@ enum Probe {
         switch cmd {
         case "keys":
             print(Keys.report())
+        case "reflex":
+            AppIndex.load()
+            let ask = rest.joined(separator: " ")
+            let t0 = Date()
+            let r = Reflex.match(ask)
+            let us = Date().timeIntervalSince(t0) * 1_000_000
+            if let r { print("\(r.label): \(r.calls.map { "\($0.name) \($0.arguments)" }.joined(separator: "; ")) → “\(r.reply)” (\(Int(us)) µs)") }
+            else { print("no reflex; goes to the model (\(Int(us)) µs)") }
         case "chat":
             let q = rest.first ?? "Say hello in Hindi in five words."
             let t0 = Date()
