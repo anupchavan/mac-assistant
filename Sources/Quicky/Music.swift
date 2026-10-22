@@ -79,6 +79,11 @@ enum Music: QuickyExtension {
                 agreed.append(h)
             } else { others.append(h) }
         }
+        // Among those, the earliest release is usually the original; a cover can be on both stores too.
+        agreed = agreed.enumerated().sorted { a, b in
+            let ya = a.element.year.isEmpty ? "9999" : String(a.element.year.prefix(4)), yb = b.element.year.isEmpty ? "9999" : String(b.element.year.prefix(4))
+            return ya == yb ? a.offset < b.offset : ya < yb
+        }.map(\.element)
         let itunesOnly = i.filter { m in !y.prefix(10).contains { same(m, $0) } }
         var out = agreed.map(\.line)
         if let top = itunesOnly.first { out.append(top.line) }
