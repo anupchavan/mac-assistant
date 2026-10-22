@@ -9,7 +9,12 @@ enum Gemini {
         ("sarvam-105b", "Sarvam 105B"),
         ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
         ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+        ("aistudio/gemini-3.8-flash", "Gemini 3.8 Flash (AI Studio)"),
     ]
+    /// "gemini-…" runs on Vertex in Mumbai; "aistudio/gemini-…" on the Gemini API (AI Studio key, served
+    /// wherever Google picks, usually outside India). Same request format for both.
+    static func isGemini(_ model: String) -> Bool { model.hasPrefix("gemini") || model.hasPrefix("aistudio/") }
+    static func ready(_ model: String) -> Bool { model.hasPrefix("aistudio/") ? Keys.aiStudio != nil : available }
     static var location: String { Keys.setting("GOOGLE_CLOUD_LOCATION", default: "asia-south1") }
     static var project: String? {
         let v = (UserDefaults.standard.string(forKey: "googleCloudProject") ?? Keys.lookup(["GOOGLE_CLOUD_PROJECT"]) ?? "")
@@ -23,7 +28,7 @@ enum Gemini {
     static var answerModel: String {
         let env = ProcessInfo.processInfo.environment["ASSISTANT_DEEP_MODEL"].flatMap { $0.isEmpty ? nil : $0 }
         let picked = env ?? UserDefaults.standard.string(forKey: "answerModel") ?? Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b")
-        return picked.hasPrefix("gemini") && !available ? "sarvam-105b" : picked
+        return isGemini(picked) && !ready(picked) ? "sarvam-105b" : picked
     }
 
     /// The model for asks that act on the page (agent route with controls to press). Picking a control
@@ -32,7 +37,7 @@ enum Gemini {
     /// ASSISTANT_ACTION_MODEL overrides; "same" uses the answer model for everything.
     static var actionModel: String {
         let picked = Keys.setting("ASSISTANT_ACTION_MODEL", default: "gemini-3.5-flash")
-        if picked == "same" || !available { return answerModel }
+        if picked == "same" || !ready(picked) { return answerModel }
         return picked
     }
 
@@ -41,17 +46,27 @@ enum Gemini {
         AsyncThrowingStream { cont in
             let task = Task {
                 do {
-                    guard let key = Keys.vertex, let project else {
-                        throw APIError(status: 401, body: "Add a Google Cloud key and project ID in Settings → API Keys.")
+                    let url: URL
+                    let key: String
+                    if model.hasPrefix("aistudio/") {
+                        guard let k = Keys.aiStudio else { throw APIError(status: 401, body: "Add a Gemini API key in Settings → API Keys.") }
+                        key = k
+                        url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(model.dropFirst("aistudio/".count)):streamGenerateContent?alt=sse")!
+                    } else {
+                        guard let k = Keys.vertex, let project else {
+                            throw APIError(status: 401, body: "Add a Google Cloud key and project ID in Settings → API Keys.")
+                        }
+                        key = k
+                        let loc = location
+                        let host = loc == "global" ? "aiplatform.googleapis.com" : "\(loc)-aiplatform.googleapis.com"
+                        url = URL(string: "https://\(host)/v1/projects/\(project)/locations/\(loc)/publishers/google/models/\(model):streamGenerateContent?alt=sse")!
                     }
-                    let loc = location
-                    let host = loc == "global" ? "aiplatform.googleapis.com" : "\(loc)-aiplatform.googleapis.com"
-                    var req = URLRequest(url: URL(string: "https://\(host)/v1/projects/\(project)/locations/\(loc)/publishers/google/models/\(model):streamGenerateContent?alt=sse")!)
+                    var req = URLRequest(url: url)
                     req.httpMethod = "POST"
                     req.timeoutInterval = 60
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
                     req.setValue(key, forHTTPHeaderField: "x-goog-api-key")
-                    req.httpBody = try JSONSerialization.data(withJSONObject: body(messages: messages, tools: tools, toolChoice: toolChoice,
+                    req.httpBody = try JSONSerialization.data(withJSONObject: body(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
                                                                                    reasoning: reasoning, maxTokens: maxTokens,
                                                                                    temperature: temperature, json: json))
                     let (bytes, resp) = try await URLSession.shared.bytes(for: req)
@@ -96,7 +111,14 @@ enum Gemini {
 
     // MARK: - OpenAI-style request → Gemini request
 
-    static func body(messages: [[String: Any]], tools: [[String: Any]]?, toolChoice: String, reasoning: String?,
+    /// Gemini 3.8 Flash rejects MINIMAL (400, 22 Oct); LOW is its floor.
+    static let noMinimal: Set<String> = ["aistudio/gemini-3.8-flash"]
+    static func thinkingLevel(model: String, reasoning: String?) -> String {
+        let level = reasoning?.uppercased() ?? "MINIMAL"
+        return level == "MINIMAL" && noMinimal.contains(model) ? "LOW" : level
+    }
+
+    static func body(model: String = "", messages: [[String: Any]], tools: [[String: Any]]?, toolChoice: String, reasoning: String?,
                      maxTokens: Int, temperature: Double?, json: Bool) -> [String: Any] {
         var system: [String] = []
         var contents: [[String: Any]] = []
@@ -137,7 +159,7 @@ enum Gemini {
             }
         }
         var gen: [String: Any] = ["maxOutputTokens": maxTokens,
-                                  "thinkingConfig": ["thinkingLevel": reasoning == nil ? "MINIMAL" : reasoning!.uppercased()]]
+                                  "thinkingConfig": ["thinkingLevel": thinkingLevel(model: model, reasoning: reasoning)]]
         if let temperature { gen["temperature"] = temperature }
         if json { gen["responseMimeType"] = "application/json" }
         var out: [String: Any] = ["contents": contents, "generationConfig": gen]
