@@ -9,6 +9,11 @@ struct ToolCall: Identifiable {
 
     func string(_ k: String) -> String { arguments[k] as? String ?? "" }
 
+    /// open_url's links: "urls", plus a single "url" (reflexes, and models that send one).
+    var urlList: [String] {
+        ([string("url")] + ((arguments["urls"] as? [String]) ?? [])).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+
     /// Needs a confirm card before running (changes or creates data, or a shortcut that can lose work).
     var needsConfirm: Bool {
         if name == "press_shortcut" { return Tools.isDestructive(shortcut: string("keys")) }
@@ -81,7 +86,9 @@ struct ToolCall: Identifiable {
     var statusText: String {
         switch name {
         case "web_search": return "Searching the web for “\(string("query"))”"
-        case "open_url": return "Opening \(URL(string: string("url"))?.host ?? "the link")"
+        case "open_url":
+            let list = urlList
+            return list.count > 1 ? "Opening \(list.count) links" : "Opening \(URL(string: list.first ?? "")?.host ?? "the link")"
         case "press": return "Pressing “\(Controls.latest.value[Controls.id(self)]?.label ?? "it")”"
         case "type_text": return "Typing “\(string("text"))”"
         case "close_tabs":
@@ -113,7 +120,8 @@ enum Tools {
         return [
             fn("web_search", "Search the web. Use it for anything current or that you aren't sure of: news, launches and release dates, prices, scores, weather, recent versions, who holds a role now. Returns dated excerpts.",
                ["query": ["type": "string", "description": "A short search query in English, with names spelled out"]], ["query"]),
-            fn("open_url", "Open a URL in the default browser. To follow a link on the open page, use its exact URL from PAGE_LINKS. Several calls open several tabs.", ["url": s], ["url"]),
+            fn("open_url", "Open one or more web pages in the browser, one tab each (up to 5). Use exact URLs from PAGE_LINKS, or ones you know.",
+               ["urls": ["type": "array", "items": s, "maxItems": 5]], ["urls"]),
             fn("close_tabs", "Close browser tabs by URL, in any window. Use it for \"close them\" or \"close the Instagram tab\": pass the URLs of the tabs (from the history of what you opened, or BROWSER). A URL also matches pages under it. Returns which tabs it actually closed.",
                ["urls": ["type": "array", "items": s]], ["urls"]),
                         fn("open_app", "Open or focus a Mac app by name", ["name": s], ["name"]),
@@ -187,9 +195,10 @@ enum Tools {
             case "web_search":
                 return await WebSearch.run(query: call.string("query"))
             case "open_url":
-                guard let url = URL(string: call.string("url")) else { return "error: bad url" }
-                await MainActor.run { _ = NSWorkspace.shared.open(url) }
-                return "opened"
+                let urls = call.urlList.compactMap { URL(string: $0) }.filter { $0.scheme != nil }
+                guard !urls.isEmpty else { return "error: bad url (pass full https URLs in \"urls\")" }
+                await MainActor.run { for u in urls.prefix(5) { _ = NSWorkspace.shared.open(u) } }
+                return urls.count == 1 ? "opened" : "opened \(min(urls.count, 5)) tabs"
             case "press":
                 return await Controls.press(Controls.id(call), pid: pid)
             case "type_text":
