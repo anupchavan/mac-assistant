@@ -564,3 +564,16 @@ final class DeepSeekBodyTests: XCTestCase {
         XCTAssertEqual(deep["reasoning_effort"] as? String, "high")
     }
 }
+
+final class BrowserTabsListTests: XCTestCase {
+    func testParseAndDescribe() {
+        let raw = "1\t1\thttps://youtube.com/watch?v=1\tThe Expanse essay\n2\t1\thttps://instagram.com/nasa\tNASA\n2\t2\t\t\n"
+        let tabs = BrowserTabs.parse(raw)
+        XCTAssertEqual(tabs.count, 3)
+        let text = BrowserTabs.describe(tabs, browser: "Safari")
+        XCTAssertTrue(text.hasPrefix("Safari: 3 tabs in 2 windows"))
+        XCTAssertTrue(text.contains("window 1 (front), 1 tab:\n- The Expanse essay — https://youtube.com/watch?v=1"))
+        XCTAssertTrue(text.contains("window 2, 2 tabs:"))
+        XCTAssertTrue(text.contains("- (blank tab)"))
+    }
+}
