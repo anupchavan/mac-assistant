@@ -249,7 +249,8 @@ struct KeyCap: View {
     let text: String
     var body: some View {
         Text(text)
-            .font(.system(size: 11, weight: .medium))
+            // ✧ comes from a fallback font that draws small and has no bold; at 13 it matches ⌘ and stays square.
+            .font(.system(size: text == "✧" ? 13 : 11, weight: .medium))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 6)
             .frame(minWidth: 22, minHeight: 22, maxHeight: 22)
