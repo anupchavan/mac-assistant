@@ -251,7 +251,7 @@ final class ReflexTests: XCTestCase {
         // Visible actions say nothing: the screen already shows it.
         XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: false, language: "en-IN"), "")
         let find = ToolCall(id: "f", name: "press_shortcut", arguments: ["keys": "cmd+f"], rawArguments: "")
-        XCTAssertEqual(AppModel.localReply([find], results: ["pressed"], saidAlready: false, language: nil), "Pressed ⌘F.")
+        XCTAssertEqual(AppModel.localReply([find], results: ["pressed"], saidAlready: false, language: nil), "")
         let press = ToolCall(id: "p", name: "press", arguments: ["id": 3], rawArguments: "")
         XCTAssertNil(AppModel.localReply([press], results: ["pressed button “Play”" + Controls.unchangedMarker], saidAlready: false, language: nil))
         XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: true, language: nil), "")
