@@ -84,6 +84,7 @@ final class AppModel: ObservableObject {
     private var tapStoppedSpeech = false
     private var lastRetry: (() -> Void)?
     private var toolRanThisTurn = false     // never re-run a turn whose tool already acted
+    private var searchPrefetch: Task<String, Never>?   // speculative web search for the ask, started with the model call
     private var visionAvailable: Bool {
         get { UserDefaults.standard.object(forKey: "visionAvailable") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "visionAvailable") }
@@ -443,6 +444,10 @@ final class AppModel: ObservableObject {
         let screenAsk = Router.looksAtScreen(ask)
         Log.info("screen ask: \(screenAsk)")
         let useVision = visionAvailable && ctx.screenshot != nil && screenAsk
+        searchPrefetch?.cancel(); searchPrefetch = nil
+        if WebSearch.available, Router.wantsFresh(ask) {
+            searchPrefetch = Task.detached { await WebSearch.run(query: ask) }
+        }
         let system = Prompts.system     // identical on every turn so the prefix caches
 
         var userContent: Any
@@ -524,8 +529,51 @@ final class AppModel: ObservableObject {
                 break
             }
         }
-        if voice { flushTTS() }
+        let searching = calls.sorted(by: { $0.key < $1.key }).first?.value.name == "web_search"
+        if voice {
+            if searching {
+                // Keep the TTS stream open across the search, so the lead-in and the answer play as one utterance.
+                if !sentenceBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { speakSentence(sentenceBuffer) }
+                sentenceBuffer = ""
+            } else {
+                flushTTS()
+            }
+        }
         guard let first = calls.sorted(by: { $0.key < $1.key }).first?.value, !first.name.isEmpty else { return }
+
+        if first.name == "web_search" {
+            // Read-only, so no confirm: run every search the model asked for at once, then answer from the results.
+            let searches = calls.sorted(by: { $0.key < $1.key }).map(\.value).filter { $0.name == "web_search" }.map { c -> ToolCall in
+                let a = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any]) ?? [:]
+                return ToolCall(id: c.id.isEmpty ? UUID().uuidString : c.id, name: c.name, arguments: a, rawArguments: c.args)
+            }
+            addStep(searches.count == 1 ? searches[0].statusText : "Searching the web (\(searches.count) searches)")
+            let prefetched = searchPrefetch
+            searchPrefetch = nil
+            let t0 = Date()
+            let results: [String] = await withTaskGroup(of: (Int, String).self) { group in
+                for (i, s) in searches.enumerated() {
+                    let query = s.string("query")
+                    group.addTask {
+                        if i == 0, let p = prefetched { return (i, await p.value) }
+                        return (i, await WebSearch.run(query: query))
+                    }
+                }
+                var out = Array(repeating: "", count: searches.count)
+                for await (i, r) in group { out[i] = r }
+                return out
+            }
+            Log.time("web_search ×\(searches.count)\(prefetched == nil ? "" : " (prefetched)")", since: t0)
+            var followUp = messages
+            followUp.append(["role": "assistant", "content": assistantText,
+                             "tool_calls": searches.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.rawArguments]] }])
+            for (s, r) in zip(searches, results) { followUp.append(["role": "tool", "tool_call_id": s.id, "content": r]) }
+            if voice && tts == nil { startTTS(language: language) }
+            if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
+            try await streamAnswer(model: model, version: version, messages: followUp, tools: tools, toolChoice: "none", reasoning: reasoning,
+                                   maxTokens: voice ? 400 : 1000, voice: voice, pid: pid, language: language)
+            return
+        }
 
         // One tool call (prompts.md §5: prefer one).
         let argsObj = (try? JSONSerialization.jsonObject(with: Data(first.args.utf8)) as? [String: Any]) ?? [:]

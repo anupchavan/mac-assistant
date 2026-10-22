@@ -26,6 +26,12 @@ enum Router {
 
     static func looksAtScreen(_ ask: String) -> Bool { matches(ask, screenCues) }
 
+    /// Asks that probably need fresh facts. A search for the ask itself starts at once, in parallel with
+    /// the model, so when the model calls web_search the results are usually already here.
+    static let freshCues = #"(?i)\b(latest|news|today|tonight|yesterday|tomorrow|this (week|month|year)|currently|right now|price|prices|cost|stock|score|weather|forecast|releas(e|ed|es|ing)|launch(ed|es|ing)?|when (is|are|does|will|did)|who won|newest|announce(d|ment)?|aaj|abhi|kab)\b"#
+
+    static func wantsFresh(_ ask: String) -> Bool { matches(ask, freshCues) }
+
     static func matches(_ t: String, _ pattern: String) -> Bool {
         t.range(of: pattern, options: .regularExpression) != nil
     }
