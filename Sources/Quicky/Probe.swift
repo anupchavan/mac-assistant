@@ -561,7 +561,10 @@ enum Probe {
             stt.onPartial = { print("… \($0)") }
             stt.onError = { print("stt error: \($0)") }
             stt.connect()
-            mic.onChunk = { chunk, _ in stt.send(chunk) }
+            SarvamSTT.debug = rest.contains("-v"); DeepgramSTT.debug = rest.contains("-v")
+            let filter = SpeechFilter { stt.send($0) }     // as the app does: only speech reaches the socket
+            var raw = Data()
+            mic.onChunk = { chunk, _ in raw.append(chunk); filter.pass(chunk) }
             try mic.start()
             print("speak now for \(Int(secs))s")
             try await Task.sleep(nanoseconds: UInt64(secs * 1e9))
@@ -569,6 +572,8 @@ enum Probe {
             let t0 = Date()
             let (text, lang) = await stt.finish(timeout: 3)
             print(String(format: "final (%@) after %.0f ms: %@", lang ?? "?", Date().timeIntervalSince(t0) * 1000, text))
+            try Microphone.wav(raw).write(to: URL(fileURLWithPath: NSTemporaryDirectory() + "quicky-mic.wav"))
+            print("mic audio: \(NSTemporaryDirectory())quicky-mic.wav")
         case "route":
             let ask = rest.joined(separator: " ")
             print(Router.route(ask, app: "Google Chrome", computerUseAvailable: true).rawValue)
