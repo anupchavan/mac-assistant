@@ -30,7 +30,7 @@ enum TriggerKey: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .rightCommand: return "⌘"
-        case .hyper: return "✧"
+        case .hyper: return "✦"
         case .control: return "⌃"
         case .rightOption: return "⌥"
         case .fn: return "fn"
