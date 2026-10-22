@@ -148,7 +148,7 @@ enum Tools {
         return [
             fn("open_url", "Open one or more web pages in the browser, one tab each (up to 5). Use exact URLs from PAGE_LINKS, or ones you know.",
                ["urls": ["type": "array", "items": s, "maxItems": 5]], ["urls"]),
-            fn("close_tabs", "Close browser tabs by URL, in any window. Use it for \"close them\" or \"close the Instagram tab\": pass the URLs of the tabs (from the history of what you opened, or BROWSER). A URL also matches pages under it. Returns which tabs it actually closed.",
+            fn("close_tabs", "Close browser tabs by URL, in any window. Use it for \"close them\" or \"close the Instagram tab\": pass the URLs of the tabs (from BROWSER_TABS, or the history of what you opened). A URL also matches pages under it. Returns which tabs it actually closed.",
                ["urls": ["type": "array", "items": s]], ["urls"]),
                         fn("open_app", "Open or focus a Mac app by name", ["name": s], ["name"]),
             fn("reveal_or_open_file", "Open a file, or reveal it in Finder", ["path": s, "reveal": ["type": "boolean"]], ["path"]),

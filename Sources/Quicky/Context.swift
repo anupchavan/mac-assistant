@@ -18,6 +18,9 @@ struct ScreenContext {
     var finderSelection: [String] = []
     var browserURL: String = ""
     var browserTitle: String = ""
+    /// Every open tab, by window, front window first: "title — url". Read with the URL, so tab
+    /// questions ("how many tabs do I have open?") are answered from the browser, not from memory.
+    var browserTabs: [[String]] = []
     var visibleText: String = ""
     var ocrText: String = ""
     var screenshot: CGImage?                 // the front window only, our panel excluded
@@ -45,6 +48,12 @@ struct ScreenContext {
         return appName
     }
 
+    static func tabLines(_ windows: [[String]]) -> String {
+        windows.enumerated().map { i, tabs in
+            "window \(i + 1)\(i == 0 ? " (front)" : ""), \(tabs.count) tab\(tabs.count == 1 ? "" : "s"):\n" + tabs.map { "- \($0)" }.joined(separator: "\n")
+        }.joined(separator: "\n")
+    }
+
     /// The per-request block, empty lines omitted (prompts.md §2).
     func block(language: String?, outputMode: String, includeOCR: Bool, includeLinks: Bool = false) -> String {
         var lines: [String] = []
@@ -59,6 +68,7 @@ struct ScreenContext {
         add("SELECTION", selection)
         add("FINDER_SELECTION", finderSelection.joined(separator: "\n"))
         if !browserURL.isEmpty { add("BROWSER", browserTitle.isEmpty ? browserURL : "\(browserURL) — \(browserTitle)") }
+        if !browserTabs.isEmpty { add("BROWSER_TABS (every open tab, by window)", Self.tabLines(browserTabs), limit: 3000) }
         add("VISIBLE_TEXT (truncated)", visibleText, limit: 3000)
         if includeOCR { add("SCREEN_TEXT_OCR (truncated)", ocrText, limit: 4000) }
         if includeLinks { add("PAGE_LINKS (text | url, whole page)", PageLink.lines(links, pageURL: browserURL), limit: 6000) }
@@ -96,6 +106,7 @@ enum ContextCapture {
         ctx.finderSelection = s.finder
         ctx.browserURL = s.url
         ctx.browserTitle = s.title
+        ctx.browserTabs = s.tabs
         ctx.links = await links
         ctx.controls = await controls
         ctx.captureMs = Date().timeIntervalSince(t0) * 1000
@@ -244,7 +255,27 @@ enum ContextCapture {
 
     // MARK: Finder selection / browser URL (Apple Events)
 
-    struct Scripted { var finder: [String] = []; var url = ""; var title = "" }
+    struct Scripted { var finder: [String] = []; var url = ""; var title = ""; var tabs: [[String]] = [] }
+
+    /// Browser script output: URL, title, then "TAB<tab>window<tab>url<tab>title" lines (front window is 1).
+    static func parseBrowser(_ result: String) -> Scripted {
+        var s = Scripted()
+        var head: [String] = []
+        var windows: [Int: [String]] = [:]
+        for line in result.split(separator: "\n", omittingEmptySubsequences: true).map(String.init) {
+            let f = line.split(separator: "\t", maxSplits: 3, omittingEmptySubsequences: false).map(String.init)
+            if f.first == "TAB", f.count >= 3, let w = Int(f[1]) {
+                let title = f.count > 3 ? f[3].trimmingCharacters(in: .whitespaces) : ""
+                windows[w, default: []].append(title.isEmpty ? f[2] : "\(title) — \(f[2])")
+            } else {
+                head.append(line)
+            }
+        }
+        s.url = head.first ?? ""
+        s.title = head.dropFirst().first ?? ""
+        s.tabs = windows.keys.sorted().compactMap { windows[$0] }
+        return s
+    }
 
     private static let scriptQueue = DispatchQueue(label: "applescript")
     private static var compiled: [String: NSAppleScript] = [:]     // scriptQueue only
@@ -267,9 +298,49 @@ enum ContextCapture {
             """
         case "com.google.Chrome", "com.brave.Browser", "com.microsoft.edgemac", "company.thebrowser.Browser", "com.vivaldi.Vivaldi":
             let name = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first?.localizedName ?? "Google Chrome"
-            source = "tell application \"\(name)\" to return (URL of active tab of front window) & linefeed & (title of active tab of front window)"
+            source = """
+            tell application "\(name)"
+              set out to (URL of active tab of front window) & linefeed & (title of active tab of front window)
+              set w to 0
+              repeat with win in windows
+                set w to w + 1
+                try
+                  set us to URL of every tab of win
+                  set ns to title of every tab of win
+                  repeat with i from 1 to count of us
+                    set u to item i of us
+                    if u is missing value then set u to "(blank tab)"
+                    set n to item i of ns
+                    if n is missing value then set n to ""
+                    set out to out & linefeed & "TAB" & (character id 9) & w & (character id 9) & u & (character id 9) & n
+                  end repeat
+                end try
+              end repeat
+              return out
+            end tell
+            """
         case "com.apple.Safari":
-            source = "tell application \"Safari\" to return (URL of front document) & linefeed & (name of front document)"
+            source = """
+            tell application "Safari"
+              set out to (URL of front document) & linefeed & (name of front document)
+              set w to 0
+              repeat with win in windows
+                set w to w + 1
+                try
+                  set us to URL of every tab of win
+                  set ns to name of every tab of win
+                  repeat with i from 1 to count of us
+                    set u to item i of us
+                    if u is missing value then set u to "(blank tab)"
+                    set n to item i of ns
+                    if n is missing value then set n to ""
+                    set out to out & linefeed & "TAB" & (character id 9) & w & (character id 9) & u & (character id 9) & n
+                  end repeat
+                end try
+              end repeat
+              return out
+            end tell
+            """
         default:
             source = nil
         }
@@ -287,7 +358,7 @@ enum ContextCapture {
                 var s = Scripted()
                 let parts = result.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
                 if bundleID == "com.apple.finder" { s.finder = parts }
-                else { s.url = parts.first ?? ""; s.title = parts.dropFirst().first ?? "" }
+                else { s = parseBrowser(result) }
                 if resumed.swap(true) == false { cont.resume(returning: s) } else { Log.info("applescript late; dropped") }
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
