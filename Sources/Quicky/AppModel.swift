@@ -85,6 +85,11 @@ final class AppModel: ObservableObject {
     private var lastRetry: (() -> Void)?
     private var toolRanThisTurn = false     // never re-run a turn whose tool already acted
     private var searchPrefetch: Task<String, Never>?   // speculative web search for the ask, started with the model call
+    private var warmTTS: (socket: SarvamTTS, at: Date)?   // opened while the user finishes speaking, adopted by startTTS
+    private var lastLanguage: String?
+    private var turnStart = Date()
+    private var firstAudioLogged = true
+    private var lastWarm = Date.distantPast
     private var visionAvailable: Bool {
         get { UserDefaults.standard.object(forKey: "visionAvailable") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "visionAvailable") }
@@ -250,6 +255,7 @@ final class AppModel: ObservableObject {
 
     private func prerollListening() {
         captureContext()
+        warmConnection()
         let s = STT.make()
         s.onPartial = { [weak self] text in self?.partial = text }
         s.onError = { [weak self] m in self?.notice = m }
@@ -313,6 +319,7 @@ final class AppModel: ObservableObject {
             return
         }
         let voicedMs = gate.voicedMs
+        prewarmTTS()
         busy = true
         steps = [StatusStep(title: "Listening", state: .active)]
         let t0 = Date()
@@ -351,6 +358,9 @@ final class AppModel: ObservableObject {
         busy = true
         steps = []
         let t0 = Date()
+        turnStart = t0
+        firstAudioLogged = !voice
+        if voice { lastLanguage = language }
         turnTask = Task {
             let ctx = await freshContext()
             context = ctx
@@ -367,12 +377,18 @@ final class AppModel: ObservableObject {
             if voice, let l = language, l != "en-IN", let name = Locale(identifier: "en").localizedString(forIdentifier: l) {
                 addStep("Heard you in \(name.components(separatedBy: " (").first ?? name)", done: true)
             }
+            if voice { startTTS(language: language) }
+            if await runReflex(ask: ask, ctx: ctx, voice: voice) {
+                Log.time("turn reflex total", since: t0)
+                finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
+                return
+            }
             let route = Router.route(ask, app: ctx.appName, computerUseAvailable: Keys.openAI != nil)
             Log.info("route \(route.rawValue)")
-            if voice { startTTS(language: language) }
             do {
                 if route == .computer { try await runComputer(ask: ask, ctx: ctx, language: language, voice: voice) }
                 else { try await answer(ask: ask, ctx: ctx, route: route, language: language, voice: voice) }
+                Log.time("turn total", since: t0)
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
             } catch is CancellationError {
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
@@ -508,9 +524,27 @@ final class AppModel: ObservableObject {
     private func streamAnswer(model: String, version: SarvamChat.Version, messages: [[String: Any]], tools: [[String: Any]]?,
                               toolChoice: String = "auto", reasoning: String?, maxTokens: Int, voice: Bool, pid: pid_t, language: String?) async throws {
         var calls: [Int: (id: String, name: String, args: String)] = [:]
+        // Safe, instant tools start the moment their arguments are complete JSON, while the model is still
+        // streaming (the next call, or just the closing events). A JSON object can't be a prefix of a longer
+        // one, so a successful parse means the arguments are final.
+        var early: [Int: Task<String, Never>] = [:]
+        let prefetched = searchPrefetch
         let t0 = Date()
         var inThink = false
         var assistantText = ""
+        func startEarly(_ i: Int) {
+            guard early[i] == nil, let c = calls[i], !c.name.isEmpty, c.args.hasSuffix("}"),
+                  let a = try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any] else { return }
+            let lead = calls[0]?.name ?? ""
+            let call = ToolCall(id: c.id, name: c.name, arguments: a, rawArguments: c.args)
+            // Same rules as below: the first call, plus more of the same kind for search and links.
+            guard i == 0 || (c.name == lead && ["web_search", "open_url"].contains(c.name)), Self.runsEarly(call) else { return }
+            if c.name == "web_search", i == 0, prefetched != nil { return }
+            if c.name == "open_url", early.count >= 5 { return }
+            if c.name != "web_search" { toolRanThisTurn = true }
+            Log.time("tool \(c.name)#\(i) args complete, starting", since: t0)
+            early[i] = Task.detached { await Tools.run(call, insertInto: pid) }
+        }
         for try await event in SarvamChat.stream(model: model, version: version, messages: messages, tools: tools,
                                                  toolChoice: toolChoice, reasoning: reasoning, maxTokens: maxTokens) {
             try Task.checkCancellation()
@@ -532,87 +566,75 @@ final class AppModel: ObservableObject {
                 if let name { c.name += name }
                 if let args { c.args += args }
                 calls[index] = c
+                startEarly(index)
             case .finished:
                 break
             }
         }
-        let searching = calls.sorted(by: { $0.key < $1.key }).first?.value.name == "web_search"
+        let ordered = calls.sorted(by: { $0.key < $1.key })
         if voice {
-            if searching {
-                // Keep the TTS stream open across the search, so the lead-in and the answer play as one utterance.
+            if ordered.isEmpty {
+                flushTTS()
+            } else {
+                // Keep the TTS stream open across the tool, so a lead-in and the reply play as one utterance
+                // on a socket that is already connected.
                 if !sentenceBuffer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { speakSentence(sentenceBuffer) }
                 sentenceBuffer = ""
-            } else {
-                flushTTS()
             }
         }
-        guard let first = calls.sorted(by: { $0.key < $1.key }).first?.value, !first.name.isEmpty else { return }
+        guard let first = ordered.first?.value, !first.name.isEmpty else { return }
         Log.time("tool call \(first.name) from \(model)", since: t0)
+        func toolCall(_ i: Int, _ c: (id: String, name: String, args: String)) -> ToolCall {
+            let a = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any]) ?? [:]
+            return ToolCall(id: c.id.isEmpty ? "call_\(i)" : c.id, name: c.name, arguments: a, rawArguments: c.args)
+        }
+        func followUp(_ ran: [ToolCall], _ results: [String], maxTokens: Int) async throws {
+            var f = messages
+            f.append(["role": "assistant", "content": assistantText,
+                      "tool_calls": ran.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.rawArguments]] }])
+            for (c, r) in zip(ran, results) { f.append(["role": "tool", "tool_call_id": c.id, "content": r]) }
+            if voice && (tts == nil || ttsFinalReceived) { startTTS(language: language) }
+            if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
+            try await streamAnswer(model: model, version: version, messages: f, tools: tools, toolChoice: "none", reasoning: reasoning,
+                                   maxTokens: maxTokens, voice: voice, pid: pid, language: language)
+        }
 
         if first.name == "web_search" {
-            // Read-only, so no confirm: run every search the model asked for at once, then answer from the results.
-            let searches = calls.sorted(by: { $0.key < $1.key }).map(\.value).filter { $0.name == "web_search" }.map { c -> ToolCall in
-                let a = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any]) ?? [:]
-                return ToolCall(id: c.id.isEmpty ? UUID().uuidString : c.id, name: c.name, arguments: a, rawArguments: c.args)
-            }
+            // Read-only, so no confirm: every search the model asked for runs at once, then the model answers from them.
+            let searches = ordered.filter { $0.value.name == "web_search" }.map { toolCall($0.key, $0.value) }
+            let indices = ordered.filter { $0.value.name == "web_search" }.map(\.key)
             addStep(searches.count == 1 ? searches[0].statusText : "Searching the web (\(searches.count) searches)")
-            let prefetched = searchPrefetch
             searchPrefetch = nil
-            let t0 = Date()
+            let ts = Date()
             let results: [String] = await withTaskGroup(of: (Int, String).self) { group in
                 for (i, s) in searches.enumerated() {
-                    let query = s.string("query")
+                    let started = early[indices[i]]
                     group.addTask {
+                        if let started { return (i, await started.value) }
                         if i == 0, let p = prefetched { return (i, await p.value) }
-                        return (i, await WebSearch.run(query: query))
+                        return (i, await WebSearch.run(query: s.string("query")))
                     }
                 }
                 var out = Array(repeating: "", count: searches.count)
                 for await (i, r) in group { out[i] = r }
                 return out
             }
-            Log.time("web_search ×\(searches.count)\(prefetched == nil ? "" : " (prefetched)")", since: t0)
-            var followUp = messages
-            followUp.append(["role": "assistant", "content": assistantText,
-                             "tool_calls": searches.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.rawArguments]] }])
-            for (s, r) in zip(searches, results) { followUp.append(["role": "tool", "tool_call_id": s.id, "content": r]) }
-            if voice && tts == nil { startTTS(language: language) }
-            if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
-            try await streamAnswer(model: model, version: version, messages: followUp, tools: tools, toolChoice: "none", reasoning: reasoning,
-                                   maxTokens: voice ? 400 : 1000, voice: voice, pid: pid, language: language)
+            Log.time("web_search ×\(searches.count)\(prefetched == nil ? "" : " (prefetched)") wait", since: ts)
+            try await followUp(searches, results, maxTokens: voice ? 400 : 1000)
             return
         }
 
+        // Links, apps, shortcuts, clipboard: the first call, plus more open_url calls ("their socials").
+        var batch = [toolCall(ordered[0].key, first)]
+        var batchIdx = [ordered[0].key]
         if first.name == "open_url" {
-            // "Open their socials": every link the model picked opens at once (a few at most), no confirm.
-            let opens = calls.sorted(by: { $0.key < $1.key }).map(\.value).filter { $0.name == "open_url" }.prefix(5).map { c -> ToolCall in
-                let a = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any]) ?? [:]
-                return ToolCall(id: c.id.isEmpty ? UUID().uuidString : c.id, name: c.name, arguments: a, rawArguments: c.args)
-            }
-            addStep(opens.count == 1 ? opens[0].statusText : "Opening \(opens.count) links")
-            toolRanThisTurn = true
-            var results: [String] = []
-            for o in opens { results.append(await Tools.run(o, insertInto: pid)) }
-            Log.info("tool open_url ×\(opens.count) → \(results.joined(separator: ", "))")
-            // So "close them" next turn knows exactly which tabs these were.
-            noteOnTurn("Quicky opened these tabs: " + opens.map { $0.string("url") }.joined(separator: " "))
-            var followUp = messages
-            followUp.append(["role": "assistant", "content": assistantText,
-                             "tool_calls": opens.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.rawArguments]] }])
-            for (o, r) in zip(opens, results) { followUp.append(["role": "tool", "tool_call_id": o.id, "content": r]) }
-            if voice { startTTS(language: language) }
-            if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
-            try await streamAnswer(model: model, version: version, messages: followUp, tools: tools, toolChoice: "none", reasoning: reasoning,
-                                   maxTokens: 300, voice: voice, pid: pid, language: language)
-            return
+            for (i, c) in ordered.dropFirst() where c.name == "open_url" && batch.count < 5 { batch.append(toolCall(i, c)); batchIdx.append(i) }
         }
-
-        // One tool call (prompts.md §5: prefer one).
-        let argsObj = (try? JSONSerialization.jsonObject(with: Data(first.args.utf8)) as? [String: Any]) ?? [:]
-        var call = ToolCall(id: first.id.isEmpty ? UUID().uuidString : first.id, name: first.name, arguments: argsObj, rawArguments: first.args)
+        var call = batch[0]
         if call.name == "insert_text" {
-            var a = argsObj; a["app"] = context?.appName ?? ""
-            call = ToolCall(id: call.id, name: call.name, arguments: a, rawArguments: first.args)
+            var a = call.arguments; a["app"] = context?.appName ?? ""
+            call = ToolCall(id: call.id, name: call.name, arguments: a, rawArguments: call.rawArguments)
+            batch[0] = call
         }
         if call.name == "use_computer" {
             // Hand off to the computer-use flow (it confirms consequential tasks itself).
@@ -623,26 +645,104 @@ final class AppModel: ObservableObject {
                 return
             }
         }
+        var confirmed = false
         if call.needsConfirm {
+            if voice { flushTTS() }
             addStep("Waiting for you to confirm")
             let ok = await askConfirm(tool: call)
             if !ok { appendAnswer(voice ? "" : "Cancelled.", voice: false); return }
+            confirmed = true
         }
-        addStep(call.statusText)
+        addStep(batch.count == 1 ? call.statusText : "Opening \(batch.count) links")
         toolRanThisTurn = true
-        let result = call.name == "use_computer" ? "error: computer use isn't set up (no OpenAI key); tell the user which shortcut or click would do it"
-            : await Tools.run(call, insertInto: pid)
-        Log.info("tool \(call.name) → \(result)")
-        if call.name == "insert_text", !result.hasPrefix("error") { hide(); return }
+        let tr = Date()
+        let results: [String]
+        if call.name == "use_computer" {
+            results = ["error: computer use isn't set up (no OpenAI key); tell the user which shortcut or click would do it"]
+        } else {
+            results = await withTaskGroup(of: (Int, String).self) { group in
+                for (n, c) in batch.enumerated() {
+                    let started = early[batchIdx[n]]
+                    group.addTask {
+                        if let started { return (n, await started.value) }
+                        return (n, await Tools.run(c, insertInto: pid))
+                    }
+                }
+                var out = Array(repeating: "", count: batch.count)
+                for await (n, r) in group { out[n] = r }
+                return out
+            }
+        }
+        Log.time("tool \(call.name) ×\(batch.count) ran → \(results.joined(separator: ", ").prefix(120))", since: tr)
+        if call.name == "insert_text", !results[0].hasPrefix("error") { hide(); return }
+        if call.name == "open_url" {
+            // So "close them" next turn knows exactly which tabs these were.
+            noteOnTurn("Quicky opened these tabs: " + batch.map { $0.string("url") }.joined(separator: " "))
+        }
 
-        var followUp = messages
-        followUp.append(["role": "assistant", "content": assistantText,
-                       "tool_calls": [["id": call.id, "type": "function", "function": ["name": call.name, "arguments": call.rawArguments]]]])
-        followUp.append(["role": "tool", "tool_call_id": call.id, "content": result])
-        if voice { startTTS(language: language) }
-        if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
-        try await streamAnswer(model: model, version: version, messages: followUp, tools: tools, toolChoice: "none", reasoning: reasoning,
-                               maxTokens: 300, voice: voice, pid: pid, language: language)
+        // Success on a plain action needs no second model trip: say it from a template right away.
+        if let reply = Self.localReply(batch, results: results, saidAlready: !assistantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                                       language: language) {
+            Log.time("tool \(call.name) done, local reply (no follow-up model call)", since: t0)
+            if !reply.isEmpty {
+                if voice && (tts == nil || ttsFinalReceived || confirmed) { startTTS(language: language) }
+                if !assistantText.isEmpty { appendAnswer(" ", voice: false) }
+                appendAnswer(reply, voice: voice)
+            }
+            if voice { flushTTS() }
+            return
+        }
+        try await followUp(batch, results, maxTokens: 300)
+    }
+
+    /// Tools that may start before the model finishes: no confirm, nothing to undo, nothing that needs the panel.
+    nonisolated static func runsEarly(_ call: ToolCall) -> Bool {
+        guard !call.needsConfirm else { return false }
+        return ["web_search", "open_url", "open_app", "press_shortcut", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
+    }
+
+    /// The one-line reply after a tool that worked, or nil to ask the model (errors, other languages, tools
+    /// whose result needs explaining). "" means the model already said its lead-in, so say nothing more.
+    nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?) -> String? {
+        guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") }) else { return nil }
+        if let l = language, !l.hasPrefix("en") { return l == "hi-IN" && !saidAlready ? "Ho gaya." : (saidAlready ? "" : nil) }
+        if saidAlready { return "" }
+        switch first.name {
+        case "open_url":
+            if calls.count > 1 { return "Opened \(calls.count) tabs." }
+            let host = PageLink.host(first.string("url"))
+            return host.isEmpty ? "Opened it." : "Opened \(host)."
+        case "open_app": return "Opened \(first.string("name"))."
+        case "press_shortcut": return Reflex.reply(forKeys: first.string("keys")) ?? "Done."
+        case "copy_to_clipboard": return "Copied."
+        case "reveal_or_open_file": return first.arguments["reveal"] as? Bool == true ? "There it is in Finder." : "Opened it."
+        case "create_event": return "Added to your calendar."
+        case "create_reminder": return "Reminder set."
+        case "move_files":
+            let n = (first.arguments["paths"] as? [String])?.count ?? 0
+            return n == 1 ? "Moved it." : "Moved \(n) files."
+        default: return nil
+        }
+    }
+
+    /// "close this tab", "open Notes": the action in code, no model. Returns false to let the model handle the ask.
+    private func runReflex(ask: String, ctx: ScreenContext, voice: Bool) async -> Bool {
+        guard let r = Reflex.match(ask, links: ctx.links) else { return false }
+        Log.info("reflex \(r.label) (no model call)")
+        addStep(r.calls[0].statusText)
+        let t = Date()
+        var results: [String] = []
+        for c in r.calls { results.append(await Tools.run(c, insertInto: ctx.pid)) }
+        Log.time("reflex tool → \(results.joined(separator: ", "))", since: t)
+        guard !results.contains(where: { $0.hasPrefix("error") }) else {
+            Log.info("reflex failed; asking the model instead")
+            return false
+        }
+        toolRanThisTurn = true
+        if r.calls[0].name == "open_url" { noteOnTurn("Quicky opened these tabs: " + r.calls.map { $0.string("url") }.joined(separator: " ")) }
+        appendAnswer(r.reply, voice: voice)
+        if voice { flushTTS() }
+        return true
     }
 
     // MARK: - Confirm card
@@ -723,14 +823,59 @@ final class AppModel: ObservableObject {
 
     // MARK: - Voice out (Bulbul)
 
+    /// A Bulbul socket whose callbacks only act while it is the current one (a warm spare stays quiet).
+    private func makeTTS(_ lang: String) -> SarvamTTS? {
+        let t = SarvamTTS(language: lang, sampleRate: 22050)
+        t.onAudio = { [weak self, weak t] pcm in
+            guard let self, let t else { return }
+            DispatchQueue.main.async {
+                guard self.tts === t else { return }
+                if !self.firstAudioLogged { self.firstAudioLogged = true; Log.time("first audio", since: self.turnStart) }
+            }
+            self.player.enqueue(int16: pcm)
+        }
+        t.onFinal = { [weak self, weak t] in guard let self, self.tts === t else { return }; self.ttsFinalReceived = true; self.playbackDrained() }
+        t.onError = { [weak self, weak t] m in
+            guard let self else { return }
+            if self.warmTTS?.socket === t { self.warmTTS = nil }
+            guard self.tts === t else { return }
+            Log.error("tts: \(m)"); self.speakingEnded()
+        }
+        do { try t.connect() } catch { Log.error("tts connect: \(error.localizedDescription)"); return nil }
+        return t
+    }
+
+    /// Opens the reply's Bulbul socket while STT finishes, in the language of the last voice turn, so the
+    /// first sentence doesn't wait for a TLS + WebSocket handshake.
+    private func prewarmTTS() {
+        warmTTS?.socket.close()
+        warmTTS = makeTTS(Sarvam.ttsLanguage(for: lastLanguage)).map { ($0, Date()) }
+    }
+
+    /// One cheap request to api.sarvam.ai on fn-down, so the chat call reuses an open HTTPS connection
+    /// (~50 ms of TCP + TLS saved, measured from Anup's Mac).
+    private func warmConnection() {
+        guard Date().timeIntervalSince(lastWarm) > 20 else { return }
+        lastWarm = Date()
+        var req = URLRequest(url: Sarvam.base)
+        req.httpMethod = "HEAD"
+        req.timeoutInterval = 3
+        URLSession.shared.dataTask(with: req).resume()
+    }
+
     private func startTTS(language: String?) {
         tts?.close()
         player.stop()
-        let t = SarvamTTS(language: Sarvam.ttsLanguage(for: language), sampleRate: 22050)
-        t.onAudio = { [weak self] pcm in self?.player.enqueue(int16: pcm) }
-        t.onFinal = { [weak self] in self?.ttsFinalReceived = true; self?.playbackDrained() }
-        t.onError = { [weak self] m in Log.error("tts: \(m)"); self?.speakingEnded() }
-        do { try t.connect() } catch { Log.error("tts connect: \(error.localizedDescription)"); return }
+        let lang = Sarvam.ttsLanguage(for: language)
+        let t: SarvamTTS
+        if let w = warmTTS, w.socket.language == lang, Date().timeIntervalSince(w.at) < 20 {
+            t = w.socket
+        } else {
+            warmTTS?.socket.close()
+            guard let fresh = makeTTS(lang) else { warmTTS = nil; tts = nil; return }
+            t = fresh
+        }
+        warmTTS = nil
         tts = t
         ttsFinalReceived = false
         sentenceBuffer = ""

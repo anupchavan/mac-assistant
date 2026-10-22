@@ -205,6 +205,59 @@ final class PageLinkTests: XCTestCase {
     }
 }
 
+final class ReflexTests: XCTestCase {
+    func keys(_ ask: String) -> String? {
+        guard let r = Reflex.match(ask), r.calls.first?.name == "press_shortcut" else { return nil }
+        return r.calls[0].string("keys")
+    }
+    func url(_ ask: String, links: [PageLink] = []) -> String? {
+        guard let r = Reflex.match(ask, links: links), r.calls.first?.name == "open_url" else { return nil }
+        return r.calls[0].string("url")
+    }
+
+    func testShortcuts() {
+        XCTAssertEqual(keys("Close this tab."), "cmd+w")
+        XCTAssertEqual(keys("hey Quicky, can you close this please"), "cmd+w")
+        XCTAssertEqual(keys("New tab"), "cmd+t")
+        XCTAssertEqual(keys("go back"), "cmd+[")
+        XCTAssertEqual(keys("Refresh the page."), "cmd+r")
+        XCTAssertEqual(keys("reopen the last closed tab"), "cmd+shift+t")
+        XCTAssertEqual(keys("zoom in"), "cmd+plus")
+        XCTAssertEqual(keys("isko band karo"), "cmd+w")
+        XCTAssertEqual(keys("next tab"), "ctrl+tab")
+    }
+
+    func testLeavesRealQuestionsToTheModel() {
+        XCTAssertNil(Reflex.match("close the tab and tell me what it said"))
+        XCTAssertNil(Reflex.match("why did it go back"))
+        XCTAssertNil(Reflex.match("what does undo mean in git"))
+        XCTAssertNil(Reflex.match("open their instagram"))
+        XCTAssertNil(Reflex.match("open this link"))
+        XCTAssertNil(Reflex.match("quit Safari"))   // destructive: model + confirm
+        XCTAssertNil(Reflex.match("restore"))
+    }
+
+    func testOpenSitesAndDomains() {
+        XCTAssertEqual(url("open youtube"), "https://www.youtube.com")
+        XCTAssertEqual(url("Open github.com."), "https://github.com")
+        XCTAssertEqual(url("youtube kholo"), "https://www.youtube.com")
+        // On a page that links to Instagram, "open instagram" may mean that profile: the model decides.
+        XCTAssertNil(url("open instagram", links: [PageLink(text: "Instagram", url: "https://instagram.com/someone")]))
+    }
+
+    func testLocalReplyAfterTools() {
+        let close = ToolCall(id: "1", name: "press_shortcut", arguments: ["keys": "cmd+w"], rawArguments: "")
+        XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: false, language: "en-IN"), "Closed.")
+        XCTAssertEqual(AppModel.localReply([close], results: ["pressed"], saidAlready: true, language: nil), "")
+        XCTAssertNil(AppModel.localReply([close], results: ["error: Safari isn't running"], saidAlready: false, language: nil))
+        XCTAssertNil(AppModel.localReply([close], results: ["pressed"], saidAlready: false, language: "ta-IN"))
+        let links = (1...3).map { ToolCall(id: "\($0)", name: "open_url", arguments: ["url": "https://x.com/a\($0)"], rawArguments: "") }
+        XCTAssertEqual(AppModel.localReply(links, results: ["opened", "opened", "opened"], saidAlready: false, language: nil), "Opened 3 tabs.")
+        let search = ToolCall(id: "s", name: "web_search", arguments: ["query": "x"], rawArguments: "")
+        XCTAssertNil(AppModel.localReply([search], results: ["[1] …"], saidAlready: false, language: nil))
+    }
+}
+
 final class BrowserTabsTests: XCTestCase {
     func testMatching() {
         let wanted = ["https://www.instagram.com/porter_in/", "x.com/PorterIndia"].map(BrowserTabs.key)
