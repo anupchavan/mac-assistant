@@ -11,6 +11,8 @@ enum Keys {
 
     static var sarvam: String? { lookup(sarvamNames) }
     static var openAI: String? { lookup(openAINames) }
+    static let deepgramNames = ["DEEPGRAM_API_KEY", "DEEPGRAM_KEY"]
+    static var deepgram: String? { lookup(deepgramNames) }
 
     private static var cache: [String: String]?
 
@@ -20,7 +22,7 @@ enum Keys {
     static func source(_ names: [String]) -> Source? { find(names)?.source }
 
     private static func find(_ names: [String]) -> (value: String, source: Source)? {
-        if names == sarvamNames || names == openAINames, let v = Keychain.get(names[0]), !v.isEmpty { return (v, .settings) }
+        if [sarvamNames, openAINames, deepgramNames].contains(names), let v = Keychain.get(names[0]), !v.isEmpty { return (v, .settings) }
         let env = ProcessInfo.processInfo.environment
         for n in names { if let v = env[n], !v.isEmpty { return (v, .environment) } }
         let file = shellExports()
@@ -78,7 +80,7 @@ enum Keys {
             guard let f = find(names) else { return "missing" }
             return "found in \(f.source.rawValue) (\(f.value.count) chars)"
         }
-        return "Sarvam key: \(mark(sarvamNames))\nOpenAI key: \(mark(openAINames))"
+        return "Sarvam key: \(mark(sarvamNames))\nOpenAI key: \(mark(openAINames))\nDeepgram key: \(mark(deepgramNames)) · STT: \(STT.provider.rawValue)"
     }
 }
 

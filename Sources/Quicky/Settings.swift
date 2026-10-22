@@ -30,6 +30,8 @@ struct SettingsView: View {
     let close: () -> Void
     @State private var sarvam = ""
     @State private var openAI = ""
+    @State private var deepgram = ""
+    @State private var sttProvider = STT.chosen.rawValue
     @State private var status = ""
     @State private var refresh = 0
     @State private var pace = SarvamTTS.pace
@@ -43,7 +45,18 @@ struct SettingsView: View {
             }
             KeyField(title: "Sarvam", hint: "Required", names: Keys.sarvamNames, text: $sarvam, refresh: refresh)
             KeyField(title: "OpenAI", hint: "Optional: clicking for you", names: Keys.openAINames, text: $openAI, refresh: refresh)
+            KeyField(title: "Deepgram", hint: "Optional: speech recognition", names: Keys.deepgramNames, text: $deepgram, refresh: refresh)
             Theme.separator.frame(height: 1)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Speech recognition").font(Fonts.bodyStrong).foregroundStyle(Theme.textPrimary)
+                Picker("", selection: $sttProvider) {
+                    Text("Sarvam").tag(STT.Provider.sarvam.rawValue)
+                    Text("Deepgram").tag(STT.Provider.deepgram.rawValue)
+                }
+                .pickerStyle(.segmented).labelsHidden()
+                .onChange(of: sttProvider) { _, v in UserDefaults.standard.set(v, forKey: "sttProvider") }
+                Text(sttNote).font(Fonts.body).foregroundStyle(Theme.textTertiary).fixedSize(horizontal: false, vertical: true)
+            }
             VStack(alignment: .leading, spacing: 6) {
                 Text("Voice speed").font(Fonts.bodyStrong).foregroundStyle(Theme.textPrimary)
                 Picker("", selection: $pace) {
@@ -73,7 +86,7 @@ struct SettingsView: View {
                 }
                 .buttonStyle(.plain)
                 .keyboardShortcut(.defaultAction)
-                .disabled(sarvam.isEmpty && openAI.isEmpty)
+                .disabled(sarvam.isEmpty && openAI.isEmpty && deepgram.isEmpty)
             }
         }
         .padding(20)
@@ -84,10 +97,20 @@ struct SettingsView: View {
         .environment(\.colorScheme, .dark)
     }
 
+    private var sttNote: String {
+        _ = refresh
+        if sttProvider == STT.Provider.deepgram.rawValue {
+            return Keys.deepgram == nil ? "Add a Deepgram key to use it. Sarvam until then."
+                                        : "English, India servers. If Deepgram fails, Sarvam takes over mid-sentence."
+        }
+        return "Saaras v4. Understands Hindi, Telugu and mixed speech."
+    }
+
     private func save() {
         if !sarvam.isEmpty { Keys.save(sarvam, for: Keys.sarvamNames) }
         if !openAI.isEmpty { Keys.save(openAI, for: Keys.openAINames) }
-        sarvam = ""; openAI = ""
+        if !deepgram.isEmpty { Keys.save(deepgram, for: Keys.deepgramNames) }
+        sarvam = ""; openAI = ""; deepgram = ""
         refresh += 1
         status = "Saved. Using it now."
         Log.info(Keys.report().replacingOccurrences(of: "\n", with: " · "))
