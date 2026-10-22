@@ -411,6 +411,13 @@ final class AppModel: ObservableObject {
         ChatStore.save(chats)
     }
 
+    /// Facts about what this turn did, kept with the turn so later turns' history carries them.
+    private func noteOnTurn(_ note: String) {
+        guard chats.indices.contains(chatIndex), !chats[chatIndex].turns.isEmpty else { return }
+        let i = chats[chatIndex].turns.count - 1
+        chats[chatIndex].turns[i].contextNote = [chats[chatIndex].turns[i].contextNote, note].compactMap { $0 }.joined(separator: "\n")
+    }
+
     private func addStep(_ title: String, done: Bool = false) {
         steps = steps.map { var s = $0; if s.state == .active { s.state = .done }; return s }
         steps.append(StatusStep(title: title, state: done ? .done : .active))
@@ -587,6 +594,8 @@ final class AppModel: ObservableObject {
             var results: [String] = []
             for o in opens { results.append(await Tools.run(o, insertInto: pid)) }
             Log.info("tool open_url ×\(opens.count) → \(results.joined(separator: ", "))")
+            // So "close them" next turn knows exactly which tabs these were.
+            noteOnTurn("Quicky opened these tabs: " + opens.map { $0.string("url") }.joined(separator: " "))
             var followUp = messages
             followUp.append(["role": "assistant", "content": assistantText,
                              "tool_calls": opens.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.rawArguments]] }])
