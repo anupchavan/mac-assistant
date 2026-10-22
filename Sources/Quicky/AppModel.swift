@@ -364,7 +364,7 @@ final class AppModel: ObservableObject {
         firstAudioLogged = !voice
         if voice { lastLanguage = language }
         turnTask = Task {
-            let ctx = await freshContext()
+            var ctx = await freshContext()
             context = ctx
             if !chats.indices.contains(chatIndex) { chats.append(Chat()); chatIndex = chats.count - 1 }
             let prev = chats[chatIndex].turns.last
@@ -390,6 +390,13 @@ final class AppModel: ObservableObject {
                 Log.time("turn control pick total", since: t0)
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
                 return
+            }
+            // Selection the app won't expose: copy it, but only for asks about the screen, and after the
+            // reflexes so "close this tab" never waits on it. Finder's ⌘C copies files; its selection is read separately.
+            if ctx.selectionUnreadable, ctx.pid != 0, ctx.bundleID != "com.apple.finder", Router.looksAtScreen(ask),
+               let s = await Selection.viaClipboard(pid: ctx.pid) {
+                ctx.selection = s
+                context = ctx
             }
             var route = Router.route(ask, app: ctx.appName, computerUseAvailable: Keys.openAI != nil)
             // With the window's controls in hand, the model can press the button itself in milliseconds;

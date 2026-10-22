@@ -13,6 +13,8 @@ struct ScreenContext {
     var underPointer: String = ""
     var focused: String = ""
     var selection: String = ""
+    /// The focused element has no selected-text attribute even after manual accessibility (not "nothing selected").
+    var selectionUnreadable = false
     var finderSelection: [String] = []
     var browserURL: String = ""
     var browserTitle: String = ""
@@ -117,13 +119,22 @@ enum ContextCapture {
             collectText(win, depth: 0, budget: &budget, out: &out, deadline: deadline)
             ctx.visibleText = out.joined(separator: "\n")
         }
-        if let focused: AXUIElement = attr(app, kAXFocusedUIElementAttribute) {
+        func readFocused() -> String? {
+            guard let focused: AXUIElement = attr(app, kAXFocusedUIElementAttribute) else { return nil }
             AXUIElementSetMessagingTimeout(focused, 0.1)
             let role: String = attr(focused, kAXRoleAttribute) ?? ""
             let value: String = (attr(focused, kAXValueAttribute) as String?) ?? ""
             ctx.focused = "\(role) \"\(value.prefix(500))\""
-            ctx.selection = attr(focused, kAXSelectedTextAttribute) ?? ""
+            return attr(focused, kAXSelectedTextAttribute)
         }
+        var selection = readFocused()
+        // Chrome/Electron expose the selection only once their tree is switched on; give it a moment to build.
+        if selection == nil, Selection.enableManualAccessibility(pid: ctx.pid) {
+            usleep(60_000)
+            selection = readFocused()
+        }
+        ctx.selection = selection ?? ""
+        ctx.selectionUnreadable = selection == nil
         let system = AXUIElementCreateSystemWide()
         var el: AXUIElement?
         if AXUIElementCopyElementAtPosition(system, Float(ctx.pointer.x), Float(ctx.pointer.y), &el) == .success, let el {

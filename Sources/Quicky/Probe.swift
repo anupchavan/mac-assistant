@@ -13,6 +13,7 @@ import SwiftUI
 ///   Quicky --probe stt-ws "text" [rounds] [-v] (same TTS audio through Sarvam and Deepgram; final-transcript latency)
 ///   Quicky --probe route "block this user"
 ///   Quicky --probe controls [seconds]          (after a delay, lists the front window's CONTROLS and how long reading them took)
+///   Quicky --probe selection [seconds]         (after a delay, reads the front app's selected text: accessibility, then ⌘C fallback)
 ///   Quicky --probe reflex "close this tab"     (the no-model fast path: prints the tool call it would make, never runs it)
 ///   Quicky --probe handoff "block this user"   (computer-use instruction only; never clicks)
 ///   Quicky --probe render <dir>                (offscreen PNGs of the panel states; nothing appears on screen)
@@ -45,6 +46,20 @@ enum Probe {
             let cs = await Controls.harvest(pid: app.processIdentifier)
             print("\(app.localizedName ?? "?"): \(cs.count) controls in \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
             print(Controls.lines(cs, max: 200))
+        case "selection":
+            let wait = Double(rest.first ?? "3") ?? 3
+            print("select some text in another app; reading in \(wait) s…")
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            var ctx = ScreenContext()
+            guard let app = NSWorkspace.shared.frontmostApplication else { return }
+            ctx.pid = app.processIdentifier
+            let t0 = Date()
+            ContextCapture.readAX(&ctx)
+            print("\(app.localizedName ?? "?"): accessibility \(ctx.selectionUnreadable ? "can't read the selection" : "“\(ctx.selection.prefix(200))”") (\(Int(Date().timeIntervalSince(t0) * 1000)) ms)")
+            if ctx.selectionUnreadable {
+                let s = await Selection.viaClipboard(pid: ctx.pid)
+                print("clipboard: \(s.map { "“\($0.prefix(200))”" } ?? "nothing copied")")
+            }
         case "reflex":
             AppIndex.load()
             let ask = rest.joined(separator: " ")
