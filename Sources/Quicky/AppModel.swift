@@ -457,7 +457,7 @@ final class AppModel: ObservableObject {
         var ctxText = ctx
         if useVision && route != .deep, let shot = ctx.screenshot, let url = ContextCapture.jpegDataURL(shot) {
             userContent = [
-                ["type": "text", "text": ctx.block(language: language, outputMode: mode, includeOCR: false)],
+                ["type": "text", "text": ctx.block(language: language, outputMode: mode, includeOCR: false, includeLinks: route == .agent)],
                 ["type": "image_url", "image_url": ["url": url]],
                 ["type": "text", "text": "ASK: \(ask)"],
             ] as [[String: Any]]
@@ -476,7 +476,7 @@ final class AppModel: ObservableObject {
                     ctxText.ocrText = await ContextCapture.ocr(shot)
                 }
             }
-            userContent = ctxText.block(language: language, outputMode: mode, includeOCR: true) + "\n\nASK: \(ask)"
+            userContent = ctxText.block(language: language, outputMode: mode, includeOCR: true, includeLinks: route == .agent) + "\n\nASK: \(ask)"
             model = deepModel; version = .v1
             reasoning = route == .deep ? "high" : nil
         }
@@ -540,6 +540,7 @@ final class AppModel: ObservableObject {
             }
         }
         guard let first = calls.sorted(by: { $0.key < $1.key }).first?.value, !first.name.isEmpty else { return }
+        Log.time("tool call \(first.name) from \(model)", since: t0)
 
         if first.name == "web_search" {
             // Read-only, so no confirm: run every search the model asked for at once, then answer from the results.
@@ -572,6 +573,28 @@ final class AppModel: ObservableObject {
             if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
             try await streamAnswer(model: model, version: version, messages: followUp, tools: tools, toolChoice: "none", reasoning: reasoning,
                                    maxTokens: voice ? 400 : 1000, voice: voice, pid: pid, language: language)
+            return
+        }
+
+        if first.name == "open_url" {
+            // "Open their socials": every link the model picked opens at once (a few at most), no confirm.
+            let opens = calls.sorted(by: { $0.key < $1.key }).map(\.value).filter { $0.name == "open_url" }.prefix(5).map { c -> ToolCall in
+                let a = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any]) ?? [:]
+                return ToolCall(id: c.id.isEmpty ? UUID().uuidString : c.id, name: c.name, arguments: a, rawArguments: c.args)
+            }
+            addStep(opens.count == 1 ? opens[0].statusText : "Opening \(opens.count) links")
+            toolRanThisTurn = true
+            var results: [String] = []
+            for o in opens { results.append(await Tools.run(o, insertInto: pid)) }
+            Log.info("tool open_url ×\(opens.count) → \(results.joined(separator: ", "))")
+            var followUp = messages
+            followUp.append(["role": "assistant", "content": assistantText,
+                             "tool_calls": opens.map { ["id": $0.id, "type": "function", "function": ["name": $0.name, "arguments": $0.rawArguments]] }])
+            for (o, r) in zip(opens, results) { followUp.append(["role": "tool", "tool_call_id": o.id, "content": r]) }
+            if voice { startTTS(language: language) }
+            if !assistantText.isEmpty { appendAnswer("\n\n", voice: false) }
+            try await streamAnswer(model: model, version: version, messages: followUp, tools: tools, toolChoice: "none", reasoning: reasoning,
+                                   maxTokens: 300, voice: voice, pid: pid, language: language)
             return
         }
 
@@ -643,7 +666,10 @@ final class AppModel: ObservableObject {
     private func runComputer(ask: String, ctx: ScreenContext, language: String?, voice: Bool) async throws {
         addStep("Working out what to click")
         let handoff: ComputerUser.Handoff
-        switch try await ComputerUser.handoff(ask: ask, context: ctx, language: language) {
+        let th = Date()
+        let result = try await ComputerUser.handoff(ask: ask, context: ctx, language: language)
+        Log.time("cua handoff", since: th)
+        switch result {
         case .failure(let question): appendAnswer(question, voice: voice); if voice { flushTTS() }; return
         case .success(let h): handoff = h
         }

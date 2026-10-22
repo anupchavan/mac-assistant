@@ -180,3 +180,27 @@ final class ControlDoubleTapTests: XCTestCase {
         c.down(320); XCTAssertFalse(c.up(400))
     }
 }
+
+final class PageLinkTests: XCTestCase {
+    func testLinesPutOtherSitesFirstAndDropJunk() {
+        let links = [
+            PageLink(text: "Pricing", url: "https://porter.in/pricing"),
+            PageLink(text: "", url: "javascript:void(0)"),
+            PageLink(text: "Instagram", url: "https://www.instagram.com/porter_in/"),
+            PageLink(text: "Instagram", url: "https://www.instagram.com/porter_in"),
+            PageLink(text: "Top", url: "https://porter.in/pricing#top"),
+            PageLink(text: "Mail", url: "mailto:help@porter.in"),
+            PageLink(text: "", url: "https://www.linkedin.com/company/porter"),
+        ]
+        XCTAssertEqual(PageLink.lines(links, pageURL: "https://www.porter.in/"), """
+        Instagram | https://www.instagram.com/porter_in/
+        - | https://www.linkedin.com/company/porter
+        Pricing | https://porter.in/pricing
+        """)
+    }
+
+    func testLinesCap() {
+        let links = (0..<200).map { PageLink(text: "x\($0)", url: "https://site\($0).com/") }
+        XCTAssertEqual(PageLink.lines(links, pageURL: "https://a.com", max: 30).split(separator: "\n").count, 30)
+    }
+}

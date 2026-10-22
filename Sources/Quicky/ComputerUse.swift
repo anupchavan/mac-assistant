@@ -76,6 +76,7 @@ final class ComputerUser {
         guard var shot = await ContextCapture.screenshot(pid: pid), let firstURL = ContextCapture.pngDataURL(shot.0) else {
             return .failed("I can't see the window. Allow Screen Recording in System Settings.")
         }
+        Log.info("cua first screenshot \(shot.0.width)×\(shot.0.height), \(firstURL.utf8.count / 1024) KB")
         var body: [String: Any] = [
             "model": model,
             "tools": [["type": "computer"]],
@@ -94,12 +95,15 @@ final class ComputerUser {
             if Date().timeIntervalSince(started) > Self.maxSeconds { return .stopped("took too long") }
             onStatus?("Thinking")
             let response: [String: Any]
+            let tr = Date()
             do {
                 let request = Task { [body] in try await Self.post(body, key: key) }
                 inflight = request
                 response = try await request.value
                 inflight = nil
+                Log.time("cua \(model) step \(actions + 1) round trip", since: tr)
             } catch is CancellationError {
+                Log.time("cua \(model) cancelled while waiting", since: tr)
                 return .stopped(stopReason.isEmpty ? "stopped" : stopReason)
             } catch let e as URLError where e.code == .cancelled {
                 return .stopped(stopReason.isEmpty ? "stopped" : stopReason)
