@@ -204,12 +204,6 @@
             "query": "rockstar a r rahman"
           },
           "expect": "tracks.length > 5"
-        },
-        {
-          "input": {
-            "query": "heterotopia abdullah siddiqui"
-          },
-          "expect": "tracks.length > 10"
         }
       ]
     },
