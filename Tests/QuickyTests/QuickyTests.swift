@@ -133,6 +133,16 @@ final class SpeechGateTests: XCTestCase {
         for _ in 0..<8 { g.feed(0.01) }
         XCTAssertEqual(g.silenceMs, 800)
     }
+    func testNoisyRoomIsNotSpeechButTalkingOverItIs() {
+        var g = SpeechGate()
+        g.feed(0.2)
+        for _ in 0..<30 { g.feed(Float.random(in: 0.026...0.035)) }   // a fan-loud room, measured on a MacBook mic
+        XCTAssertFalse(g.heardSpeech)
+        for level: Float in [0.2, 0.08, 0.14, 0.38, 0.34, 0.04, 0.23, 0.2] { g.feed(level) }
+        XCTAssertTrue(g.heardSpeech)
+        for _ in 0..<8 { g.feed(0.03) }
+        XCTAssertEqual(g.silenceMs, 800)
+    }
     func testNoiseTranscripts() {
         XCTAssertTrue(SpeechGate.isNoise(" ... ", voicedMs: 2000))
         XCTAssertTrue(SpeechGate.isNoise("Thank you.", voicedMs: 400))

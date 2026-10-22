@@ -85,6 +85,7 @@ final class AppModel: ObservableObject {
     private var cua: ComputerUser?
     private var cuaUserTravel: Double = 0     // points the user has moved the mouse during computer use
     private var gate = SpeechGate()
+    private var speechFilter: SpeechFilter?
     private var tapStoppedSpeech = false
     private var lastRetry: (() -> Void)?
     private var toolRanThisTurn = false     // never re-run a turn whose tool already acted
@@ -273,9 +274,10 @@ final class AppModel: ObservableObject {
         stt = s
         partial = ""
         gate = SpeechGate()
-        let filter = SpeechFilter()
-        mic.onChunk = { [weak self, weak s] chunk, level in
-            for c in filter.pass(chunk, level: level) { s?.send(c) }
+        let filter = SpeechFilter { [weak s] in s?.send($0) }
+        speechFilter = filter
+        mic.onChunk = { [weak self] chunk, level in
+            filter.pass(chunk)
             Task { @MainActor in self?.level(level) }
         }
         do { try mic.start() } catch { notice = "Microphone unavailable: \(error.localizedDescription)" }
@@ -322,9 +324,9 @@ final class AppModel: ObservableObject {
         listening = false
         handsFree = false
         stt = nil
-        // Nothing was said: no STT call, no turn.
-        if duration < 0.3 || !gate.heardSpeech {
-            Log.info(String(format: "no speech (voiced %.0f ms, floor %.3f); discarded", gate.voicedMs, gate.noiseFloor))
+        // Nothing was said: no STT call, no turn. Typing can sound loud enough; the classifier knows better.
+        if duration < 0.3 || !gate.heardSpeech || speechFilter?.heardSpeech == false {
+            Log.info(String(format: "no speech (voiced %.0f ms, floor %.3f, classifier %@); discarded", gate.voicedMs, gate.noiseFloor, speechFilter?.heardSpeech == true ? "speech" : "none"))
             s.close(); partial = ""
             if !shownBeforeHold && turns.isEmpty { hide() }
             return

@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreAudio
+import SoundAnalysis
 
 /// Microphone → 16 kHz mono Int16 PCM chunks (~100 ms), plus a simple level for local silence detection.
 final class Microphone {
@@ -199,31 +200,32 @@ final class PCMPlayer {
     func reset() { stop() }
 }
 
-/// Local speech detection on the mic's ~100 ms RMS chunks. An adaptive noise floor, and "speech"
-/// only after enough voiced time, so a key click or room noise never counts as someone talking.
+/// Local speech detection on the mic's ~100 ms RMS chunks. The noise floor is the quietest level of
+/// the last 3 s, so a fan or a noisy room (often 0.03 RMS, double a quiet one) stops counting as speech
+/// within a chunk, while speech, which always has quieter gaps between words, can't drag it up.
+/// "Speech" only after enough voiced time, so a key click never counts as someone talking.
 struct SpeechGate {
     static let minVoicedMs: Double = 300
 
-    private(set) var noiseFloor: Float = 0.008
     private(set) var voicedMs: Double = 0
     private(set) var silenceMs: Double = 0      // consecutive, since the last voiced chunk
+    private var recent: [Float] = []            // levels of the last 3 s, newest last
     private var chunks = 0
 
     var heardSpeech: Bool { voicedMs >= Self.minVoicedMs }
+    var noiseFloor: Float { min(recent.min() ?? 0.008, 0.06) }
 
     /// Returns whether this chunk was voiced.
     @discardableResult
     mutating func feed(_ rms: Float, ms: Double = 100) -> Bool {
         chunks += 1
-        // The first chunk carries the fn key's click; it only seeds the floor.
-        if chunks > 1, rms > max(0.015, noiseFloor * 2.5) {
-            voicedMs += ms
-            silenceMs = 0
-            return true
-        }
-        noiseFloor = noiseFloor * 0.9 + min(rms, 0.05) * 0.1
-        silenceMs += ms
-        return false
+        // The first chunk carries the fn key's click; it never counts, not even toward the floor.
+        guard chunks > 1 else { return false }
+        let voiced = rms > max(0.015, noiseFloor * 2.5)
+        recent.append(rms)
+        if recent.count > 30 { recent.removeFirst() }
+        if voiced { voicedMs += ms; silenceMs = 0 } else { silenceMs += ms }
+        return voiced
     }
 
     /// Transcripts that mean nothing was said: empty, only punctuation, or a known silence
@@ -242,25 +244,64 @@ struct SpeechGate {
     ]
 }
 
-/// Holds back audio that isn't speech. Realtime STT invents words from silence (Saaras v4 writes
-/// "However, whatever happens, happens." over 4 s of digital zeros), so the socket only hears speech,
-/// a short lead-in before it, and a short tail after it. Runs on the audio thread.
-final class SpeechFilter {
-    private var gate = SpeechGate()
-    private var lead: [Data] = []
-    private var tail = 0
+/// Holds back audio that isn't speech. Realtime STT invents words from anything else: Saaras v4 writes
+/// "However, whatever happens, happens." over silence, a fan or typing. So the socket only hears what
+/// Apple's on-device sound classifier calls speech, plus 1 s before it (the classifier needs half a
+/// second to be sure, and soft onsets matter) and 1 s after it.
+final class SpeechFilter: NSObject, SNResultsObserving {
+    private static let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 16000, channels: 1, interleaved: false)!
+    private let send: (Data) -> Void
+    private let queue = DispatchQueue(label: "speech-filter")
+    private let analyzer = SNAudioStreamAnalyzer(format: SpeechFilter.format)
+    private var held: [Data] = []       // the last second, not sent
+    private var frame: Int64 = 0        // 16 kHz frames seen so far
+    private var openUntil: Int64 = -1   // audio before this frame goes straight through
 
-    /// The chunks to send now (possibly none).
-    func pass(_ chunk: Data, level: Float) -> [Data] {
-        if gate.feed(level) {
-            tail = 10                                   // 1 s, so quiet word endings still go up
-            defer { lead.removeAll() }
-            return lead + [chunk]
+    /// Whether any speech went to the socket.
+    var heardSpeech: Bool { queue.sync { openUntil >= 0 } }
+
+    init(send: @escaping (Data) -> Void) {
+        self.send = send
+        super.init()
+        do {
+            let r = try SNClassifySoundRequest(classifierIdentifier: .version1)
+            r.windowDuration = CMTime(value: 8000, timescale: 16000)   // 0.5 s windows every 0.25 s
+            r.overlapFactor = 0.5
+            try analyzer.add(r, withObserver: self)
+        } catch {
+            Log.error("speech filter: \(error.localizedDescription); sending all audio")
+            openUntil = .max
         }
-        if tail > 0 { tail -= 1; return [chunk] }
-        lead.append(chunk)
-        if lead.count > 3 { lead.removeFirst() }        // 300 ms, for soft word onsets
-        return []
+    }
+
+    /// Each ~100 ms chunk of 16 kHz Int16 mono, from the audio thread.
+    func pass(_ chunk: Data) {
+        queue.async { [self] in
+            let start = frame
+            let n = chunk.count / 2
+            frame += Int64(n)
+            if openUntil != .max, let buf = AVAudioPCMBuffer(pcmFormat: Self.format, frameCapacity: AVAudioFrameCount(n)) {
+                buf.frameLength = AVAudioFrameCount(n)
+                chunk.withUnsafeBytes { raw in
+                    let src = raw.bindMemory(to: Int16.self)
+                    for i in 0..<n { buf.floatChannelData![0][i] = Float(Int16(littleEndian: src[i])) / 32768 }
+                }
+                analyzer.analyze(buf, atAudioFramePosition: start)
+            }
+            if start < openUntil { send(chunk); return }
+            held.append(chunk)
+            if held.count > 10 { held.removeFirst() }
+        }
+    }
+
+    func request(_ request: SNRequest, didProduce result: SNResult) {
+        guard let c = result as? SNClassificationResult, (c.classification(forIdentifier: "speech")?.confidence ?? 0) > 0.6 else { return }
+        let end = Int64(c.timeRange.end.seconds * 16000)
+        queue.async { [self] in
+            openUntil = max(openUntil, end + 16000)
+            for h in held { send(h) }
+            held.removeAll()
+        }
     }
 }
 
