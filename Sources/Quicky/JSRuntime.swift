@@ -64,7 +64,8 @@ final class JSExtension: @unchecked Sendable {
         let inputJSON = ExtensionHost.json(input)
         return try await withCheckedThrowingContinuation { (c: CheckedContinuation<Any, Error>) in
             let once = Once(c)
-            queue.asyncAfter(deadline: .now() + .milliseconds(timeoutMs)) { once.finish(.failure(JSError("timed out after \(timeoutMs) ms"))) }
+            // The timer runs off the extension's queue, so a call that blocks that queue still times out.
+            DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(timeoutMs)) { once.finish(.failure(JSError("timed out after \(timeoutMs) ms"))) }
             queue.async { [ctx] in
                 let ok: @convention(block) (JSValue) -> Void = { v in once.finish(.success(JSBridge.parse(v.toString()))) }
                 let fail: @convention(block) (JSValue) -> Void = { e in once.finish(.failure(JSError(e.toString()))) }
@@ -220,13 +221,17 @@ enum JSBridge {
             if let bad = apps.first(where: { !m.applescriptApps.contains($0) }) {
                 queue.async { fail.call(withArguments: ["\(bad) isn't in permissions.applescript"]) }; return
             }
-            // Never launch an app just to ask it something.
-            let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.localizedName))
-            guard apps.allSatisfy(running.contains) else { queue.async { ok.call(withArguments: [""]) }; return }
+            // One answer per call: the script's, or a timeout (an Automation prompt or a hung app can block for minutes).
+            let answered = Locked(false)
+            func answer(_ f: @escaping () -> Void) { if !answered.swap(true) { queue.async(execute: f) } }
+            DispatchQueue.global().asyncAfter(deadline: .now() + 3) { answer { fail.call(withArguments: ["AppleScript took over 3 s (is Automation allowed for Quicky?)"]) } }
             scriptQueue.async {
+                // Never launch an app just to ask it something.
+                let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.localizedName))
+                guard apps.allSatisfy(running.contains) else { return answer { ok.call(withArguments: [""]) } }
                 var err: NSDictionary?
                 let out = NSAppleScript(source: src)?.executeAndReturnError(&err).stringValue
-                queue.async {
+                answer {
                     if let err { fail.call(withArguments: [err[NSAppleScript.errorMessage] as? String ?? "AppleScript failed"]) }
                     else { ok.call(withArguments: [out ?? ""]) }
                 }
@@ -334,7 +339,7 @@ enum Composer {
         do {
             out = try await withCheckedThrowingContinuation { (c: CheckedContinuation<String, Error>) in
                 let once = Once(c)
-                queue.asyncAfter(deadline: .now() + timeout) { once.finish(.failure(JSError("the program ran over \(Int(timeout)) s"))) }
+                DispatchQueue.global().asyncAfter(deadline: .now() + timeout) { once.finish(.failure(JSError("the program ran over \(Int(timeout)) s"))) }
                 queue.async {
                     let ctx = JSContext(virtualMachine: JSVirtualMachine())!
                     ctx.name = "Quicky · run"

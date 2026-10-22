@@ -72,11 +72,12 @@ async function itunesSearch(q, query, kind, store) {
   })
 }
 
-async function itunesAlbum(q, query) {
-  const j = await getJSON(q, `https://itunes.apple.com/search?term=${enc(query)}&entity=album&limit=1&country=${q.country}`)
+async function itunesAlbum(q, query, store) {
+  store = store || q.country
+  const j = await getJSON(q, `https://itunes.apple.com/search?term=${enc(query)}&entity=album&limit=1&country=${store}`)
   const a = j && j.results && j.results[0]
   if (!a || !a.collectionId) return null
-  const t = await getJSON(q, `https://itunes.apple.com/lookup?id=${a.collectionId}&entity=song&country=${q.country}`)
+  const t = await getJSON(q, `https://itunes.apple.com/lookup?id=${a.collectionId}&entity=song&country=${store}`)
   const tracks = ((t && t.results) || []).filter(r => r.wrapperType === 'track').map(r => ({
     n: r.trackNumber || 0, title: r.trackName || '', artists: r.artistName || '',
     length: r.trackTimeMillis ? mmss(r.trackTimeMillis / 1000) : '', seconds: r.trackTimeMillis ? r.trackTimeMillis / 1000 : undefined,
@@ -84,7 +85,9 @@ async function itunesAlbum(q, query) {
   if (!tracks.length) return null
   return {
     title: a.collectionName || query, artists: a.artistName || '', year: (a.releaseDate || '').slice(0, 4),
-    label: a.copyright || '', apple: appleLink(a.collectionViewUrl || ''), youtube: '', tracks,
+    label: a.copyright || '', youtube: '', tracks,
+    ...(store === q.country ? { apple: appleLink(a.collectionViewUrl || '') }
+                            : { apple: '', appleOther: appleLink(a.collectionViewUrl || ''), appleOtherStore: store }),
   }
 }
 
@@ -269,12 +272,19 @@ exports.search = async ({ query, kind }, q) => {
   const asked = new Set(query.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length > 2))
   const relevant = h => `${h.title} ${h.artists}`.toLowerCase().split(/[^\p{L}\p{N}]+/u).some(w => asked.has(w))
   const appleOnly = i.filter(m => !yt.some(h => same(m, h))).filter(relevant)
-  const rows = [...agreed, ...appleOnly.slice(0, 1), ...others, ...appleOnly.slice(1)].slice(0, 6)
+  // Songs only another store has (not here, not in YouTube Music's top 10) still count: they can be downloaded.
+  const abroadOnly = []
+  for (const f of foreign.flat()) {
+    if (!relevant(f) || yt.some(h => same(f, h)) || i.some(m => same(f, m)) || abroadOnly.some(a => same(f, a))) continue
+    abroadOnly.push(Object.assign({}, f, { apple: '', appleOther: f.apple, appleOtherStore: f.store }))
+  }
+  const rows = [...agreed, ...appleOnly.slice(0, 1), ...abroadOnly.slice(0, 1), ...others, ...appleOnly.slice(1), ...abroadOnly.slice(1)].slice(0, 6)
   for (const h of rows) {
-    if (h.apple) continue
+    if (h.apple || h.appleOther) continue
     const f = foreign.flat().find(m => same(m, h))
     if (f) Object.assign(h, { appleOther: f.apple, appleOtherStore: f.store, year: h.year || f.year, album: h.album || f.album })
   }
+  for (const h of rows) delete h.store
   return {
     store: q.country,
     results: rows.map(({ browseId, ...h }) => Object.assign(h, { match: q.match(query, `${h.title} ${h.artists} ${h.album}`) })),
@@ -282,7 +292,10 @@ exports.search = async ({ query, kind }, q) => {
 }
 
 exports.album = async ({ query }, q) => {
-  return (await itunesAlbum(q, query).catch(() => null)) || (await ytAlbum(q, query).catch(() => null))
+  // All stores at once; this country's wins, then another store's (for downloading), then YouTube Music.
+  const stores = [q.country, ...['nz', 'us'].filter(s => s !== q.country)]
+  const [here, ...abroad] = await Promise.all(stores.map(s => itunesAlbum(q, query, s).catch(() => null)))
+  return here || abroad.find(Boolean) || (await ytAlbum(q, query).catch(e => { q.log('ytmusic album:', e.message); return null }))
 }
 
 exports.lyrics = async ({ title, artist, album, seconds }, q) => {
