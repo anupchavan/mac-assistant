@@ -526,3 +526,29 @@ final class AudioTagsTests: XCTestCase {
         XCTAssertEqual(AppModel.cleanForSpeech("[sighs] Fine [link"), "[sighs] Fine link")
     }
 }
+
+final class AnthropicBodyTests: XCTestCase {
+    func testToolTurnTranslates() {
+        let messages: [[String: Any]] = [
+            ["role": "system", "content": "You are Quicky."],
+            ["role": "user", "content": "open two links"],
+            ["role": "assistant", "content": "Opening.", "tool_calls": [
+                ["id": "toolu_a", "type": "function", "function": ["name": "open_url", "arguments": "{\"url\":\"a\"}"]],
+                ["id": "toolu_b", "type": "function", "function": ["name": "open_url", "arguments": "{\"url\":\"b\"}"]],
+            ]],
+            ["role": "tool", "tool_call_id": "toolu_a", "content": "opened"],
+            ["role": "tool", "tool_call_id": "toolu_b", "content": ""],
+        ]
+        let tools: [[String: Any]] = [["type": "function", "function": ["name": "open_url", "description": "Open", "parameters": ["type": "object"]]]]
+        let b = Anthropic.body(model: "claude-haiku-5-5", messages: messages, tools: tools, toolChoice: "none", reasoning: "high", maxTokens: 900)
+        XCTAssertEqual(b["system"] as? String, "You are Quicky.")
+        let out = b["messages"] as! [[String: Any]]
+        XCTAssertEqual(out.map { $0["role"] as! String }, ["user", "assistant", "user"])
+        let results = out[2]["content"] as! [[String: Any]]
+        XCTAssertEqual(results.map { $0["tool_use_id"] as! String }, ["toolu_a", "toolu_b"])   // one user message for both results
+        XCTAssertEqual(results[1]["content"] as? String, "(empty)")
+        XCTAssertEqual((b["output_config"] as? [String: Any])?["effort"] as? String, "high")
+        XCTAssertEqual((b["tool_choice"] as? [String: Any])?["type"] as? String, "none")
+        XCTAssertNil(b["temperature"])
+    }
+}

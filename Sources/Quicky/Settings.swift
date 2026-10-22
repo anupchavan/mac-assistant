@@ -52,6 +52,8 @@ struct GeneralSettings: View {
     @State private var hasDeepgramKey = Keys.deepgram != nil
     @State private var answer = UserDefaults.standard.string(forKey: "answerModel") ?? "sarvam-105b"
     @State private var hasGemini = Gemini.available
+    @State private var hasClaude = Anthropic.available
+    @State private var claudeThinking = Anthropic.thinking
 
     var body: some View {
         Form {
@@ -64,6 +66,17 @@ struct GeneralSettings: View {
                 }
                 .pickerStyle(.menu)
                 .onChange(of: answer) { _, v in UserDefaults.standard.set(v, forKey: "answerModel") }
+                if Anthropic.isClaude(answer) {
+                    Picker(selection: $claudeThinking) {
+                        Text("Auto").tag("auto")
+                        Text("Off").tag("off")
+                    } label: {
+                        Text("Thinking")
+                        Text(claudeThinking == "off" ? "Never thinks first. Fastest first word." : "Claude decides per ask whether to think. Quick asks skip it.")
+                    }
+                    .pickerStyle(.segmented)
+                    .onChange(of: claudeThinking) { _, v in UserDefaults.standard.set(v, forKey: "claudeThinking") }
+                }
             }
             Section("Listening") {
                 Picker(selection: $stt) {
@@ -101,10 +114,15 @@ struct GeneralSettings: View {
             PermissionsSection()
         }
         .formStyle(.grouped)
-        .onAppear { hasDeepgramKey = Keys.deepgram != nil; hasGemini = Gemini.available; hasElevenLabsKey = Keys.elevenLabs != nil }
+        .onAppear { hasDeepgramKey = Keys.deepgram != nil; hasGemini = Gemini.available; hasClaude = Anthropic.available; hasElevenLabsKey = Keys.elevenLabs != nil }
     }
 
     private var answerNote: String {
+        if Anthropic.isClaude(answer) {
+            return hasClaude
+                ? "Anthropic API, served outside India. Also reads screenshots and presses controls. Falls back to Sarvam if it fails."
+                : "Add an Anthropic key in API Keys to use it. Sarvam until then."
+        }
         if answer.hasPrefix("aistudio/") {
             return Keys.aiStudio != nil
                 ? "Gemini API (AI Studio), served outside India, so slower. Also reads screenshots. Falls back to Sarvam if it fails."
@@ -269,6 +287,7 @@ struct KeysSettings: View {
                 KeyRow(title: "Deepgram", hint: "Optional: faster speech recognition", names: Keys.deepgramNames)
                 KeyRow(title: "Google Cloud", hint: "Optional: Gemini answers from Mumbai", names: Keys.vertexNames)
                 KeyRow(title: "Gemini API", hint: "Optional: Gemini 3.8 Flash from AI Studio", names: Keys.aiStudioNames)
+                KeyRow(title: "Anthropic", hint: "Optional: Claude Haiku 5.5 answers", names: Anthropic.keyNames)
                 ProjectRow()
                 KeyRow(title: "ElevenLabs", hint: "Optional: the expressive Eleven v4 voice", names: Keys.elevenLabsNames)
             } footer: {

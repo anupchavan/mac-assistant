@@ -10,11 +10,18 @@ enum Gemini {
         ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
         ("gemini-3.5-flash", "Gemini 3.5 Flash"),
         ("aistudio/gemini-3.8-flash", "Gemini 3.8 Flash (AI Studio)"),
+        ("claude-haiku-5-5", "Claude Haiku 5.5"),
     ]
     /// "gemini-…" runs on Vertex in Mumbai; "aistudio/gemini-…" on the Gemini API (AI Studio key, served
     /// wherever Google picks, usually outside India). Same request format for both.
     static func isGemini(_ model: String) -> Bool { model.hasPrefix("gemini") || model.hasPrefix("aistudio/") }
-    static func ready(_ model: String) -> Bool { model.hasPrefix("aistudio/") ? Keys.aiStudio != nil : available }
+    static func ready(_ model: String) -> Bool {
+        if Anthropic.isClaude(model) { return Anthropic.available }
+        return model.hasPrefix("aistudio/") ? Keys.aiStudio != nil : available
+    }
+    /// Models answered by someone other than Sarvam: they need their own key, see screenshots themselves,
+    /// and fall back to Sarvam if they fail before saying anything.
+    static func isOptional(_ model: String) -> Bool { isGemini(model) || Anthropic.isClaude(model) }
     static var location: String { Keys.setting("GOOGLE_CLOUD_LOCATION", default: "asia-south1") }
     static var project: String? {
         let v = (UserDefaults.standard.string(forKey: "googleCloudProject") ?? Keys.lookup(["GOOGLE_CLOUD_PROJECT"]) ?? "")
@@ -28,15 +35,16 @@ enum Gemini {
     static var answerModel: String {
         let env = ProcessInfo.processInfo.environment["ASSISTANT_DEEP_MODEL"].flatMap { $0.isEmpty ? nil : $0 }
         let picked = env ?? UserDefaults.standard.string(forKey: "answerModel") ?? Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b")
-        return isGemini(picked) && !ready(picked) ? "sarvam-105b" : picked
+        return isOptional(picked) && !ready(picked) ? "sarvam-105b" : picked
     }
 
     /// The model for asks that act on the page (agent route with controls to press). Picking a control
     /// is where sarvam-105b failed (3 of 18 right vs 14 of 18 for Gemini 3.5 Flash, 22 Oct), so actions
     /// go to Gemini when it's set up, while talk keeps the faster answer model.
-    /// ASSISTANT_ACTION_MODEL overrides; "same" uses the answer model for everything.
+    /// ASSISTANT_ACTION_MODEL overrides; "same" uses the answer model for everything. Claude, when it
+    /// answers, also acts (it is at least as good at picking controls).
     static var actionModel: String {
-        let picked = Keys.setting("ASSISTANT_ACTION_MODEL", default: "gemini-3.5-flash")
+        let picked = Keys.setting("ASSISTANT_ACTION_MODEL", default: Anthropic.isClaude(answerModel) ? "same" : "gemini-3.5-flash")
         if picked == "same" || !ready(picked) { return answerModel }
         return picked
     }
