@@ -823,7 +823,9 @@ final class AppModel: ObservableObject {
     /// an undo the item in the menu it opens is pressed too, with the confirm card where it matters. If the
     /// expected item isn't there, nothing else gets pressed: Quicky says so. Returns false to let the model try.
     private func runControlPick(ask: String, ctx: ScreenContext, voice: Bool) async -> Bool {
-        guard let p = ControlPick.pick(ask, in: ctx.controls) else { return false }
+        // QUICKY_CONTROLPICK=0 lets the model choose every press (to test whether the code pick is still needed).
+        guard Keys.setting("QUICKY_CONTROLPICK", default: "1") != "0",
+              let p = ControlPick.pick(ask, in: ctx.controls) else { return false }
         Log.info("control pick: \(p.control.line)\(p.then.isEmpty ? "" : " then \(p.then.joined(separator: "/"))")")
         toolRanThisTurn = true
         func press(_ c: Control) async -> String? {
