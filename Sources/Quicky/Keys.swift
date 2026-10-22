@@ -22,7 +22,7 @@ enum Keys {
     static func source(_ names: [String]) -> Source? { find(names)?.source }
 
     private static func find(_ names: [String]) -> (value: String, source: Source)? {
-        if names == sarvamNames || names == openAINames, let v = Keychain.get(names[0]), !v.isEmpty { return (v, .settings) }
+        if [sarvamNames, openAINames, deepgramNames].contains(names), let v = Keychain.get(names[0]), !v.isEmpty { return (v, .settings) }
         let env = ProcessInfo.processInfo.environment
         for n in names { if let v = env[n], !v.isEmpty { return (v, .environment) } }
         let file = shellExports()
