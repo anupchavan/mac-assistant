@@ -67,7 +67,7 @@ final class AppModel: ObservableObject {
     let hotkey = HotkeyMonitor()
 
     private let mic = Microphone()
-    private var stt: SarvamSTT?
+    private var stt: SpeechToText?
     private var contextTask: Task<ScreenContext, Never>?
     private var contextAt = Date.distantPast
     private var turnTask: Task<Void, Never>?
@@ -256,7 +256,7 @@ final class AppModel: ObservableObject {
     private func prerollListening() {
         captureContext()
         warmConnection()
-        let s = SarvamSTT()
+        let s = STT.make()
         s.onPartial = { [weak self] text in self?.partial = text }
         s.onError = { [weak self] m in self?.notice = m }
         s.connect()
@@ -324,7 +324,7 @@ final class AppModel: ObservableObject {
         steps = [StatusStep(title: "Listening", state: .active)]
         let t0 = Date()
         Task {
-            let (text, lang) = await s.finish()
+            let (text, lang) = await s.finish(timeout: 3)
             Log.time("stt.final", since: t0)
             let ask = text.trimmingCharacters(in: .whitespacesAndNewlines)
             busy = false
@@ -425,6 +425,13 @@ final class AppModel: ObservableObject {
         if error != nil, !speaking { tts?.close(); tts = nil }
         steps = steps.map { var s = $0; if s.state == .active { s.state = .done }; return s }
         ChatStore.save(chats)
+    }
+
+    /// Facts about what this turn did, kept with the turn so later turns' history carries them.
+    private func noteOnTurn(_ note: String) {
+        guard chats.indices.contains(chatIndex), !chats[chatIndex].turns.isEmpty else { return }
+        let i = chats[chatIndex].turns.count - 1
+        chats[chatIndex].turns[i].contextNote = [chats[chatIndex].turns[i].contextNote, note].compactMap { $0 }.joined(separator: "\n")
     }
 
     private func addStep(_ title: String, done: Bool = false) {
@@ -668,6 +675,10 @@ final class AppModel: ObservableObject {
         }
         Log.time("tool \(call.name) ×\(batch.count) ran → \(results.joined(separator: ", ").prefix(120))", since: tr)
         if call.name == "insert_text", !results[0].hasPrefix("error") { hide(); return }
+        if call.name == "open_url" {
+            // So "close them" next turn knows exactly which tabs these were.
+            noteOnTurn("Quicky opened these tabs: " + batch.map { $0.string("url") }.joined(separator: " "))
+        }
 
         // Success on a plain action needs no second model trip: say it from a template right away.
         if let reply = Self.localReply(batch, results: results, saidAlready: !assistantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -728,6 +739,7 @@ final class AppModel: ObservableObject {
             return false
         }
         toolRanThisTurn = true
+        if r.calls[0].name == "open_url" { noteOnTurn("Quicky opened these tabs: " + r.calls.map { $0.string("url") }.joined(separator: " ")) }
         appendAnswer(r.reply, voice: voice)
         if voice { flushTTS() }
         return true

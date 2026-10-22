@@ -257,3 +257,13 @@ final class ReflexTests: XCTestCase {
         XCTAssertNil(AppModel.localReply([search], results: ["[1] …"], saidAlready: false, language: nil))
     }
 }
+
+final class BrowserTabsTests: XCTestCase {
+    func testMatching() {
+        let wanted = ["https://www.instagram.com/porter_in/", "x.com/PorterIndia"].map(BrowserTabs.key)
+        XCTAssertTrue(BrowserTabs.matches("https://instagram.com/porter_in?igsh=1", wanted))
+        XCTAssertTrue(BrowserTabs.matches("https://x.com/porterindia/status/1", wanted))
+        XCTAssertFalse(BrowserTabs.matches("https://www.instagram.com/porter_india", wanted))
+        XCTAssertFalse(BrowserTabs.matches("https://porter.in/", wanted))
+    }
+}

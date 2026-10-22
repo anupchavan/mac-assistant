@@ -9,7 +9,8 @@ import SwiftUI
 ///   Quicky --probe vision                      (front window → gemma4 on /v2; tells you if V2 is whitelisted)
 ///   Quicky --probe context                     (prints the context block for the front app)
 ///   Quicky --probe tts "namaste" [hi-IN]       (Bulbul socket, plays it, prints first-audio latency)
-///   Quicky --probe stt [seconds]               (records from the mic, realtime STT, prints the transcript)
+///   Quicky --probe stt [seconds] [sarvam|deepgram] (records from the mic, realtime STT, prints the transcript)
+///   Quicky --probe stt-ws "text" [rounds] [-v] (same TTS audio through Sarvam and Deepgram; final-transcript latency)
 ///   Quicky --probe route "block this user"
 ///   Quicky --probe reflex "close this tab"     (the no-model fast path: prints the tool call it would make, never runs it)
 ///   Quicky --probe handoff "block this user"   (computer-use instruction only; never clicks)
@@ -95,7 +96,7 @@ enum Probe {
             await MainActor.run { RenderProbe.run(into: dir) }
         case "stt-ws":
             // Speech made by Sarvam TTS (REST, 16 kHz) streamed into our realtime STT socket like the mic would.
-            SarvamSTT.debug = true
+            SarvamSTT.debug = true; DeepgramSTT.debug = rest.contains("-v")
             let text = rest.first ?? "Can you close this tab?"
             var req = URLRequest(url: Sarvam.base.appendingPathComponent("text-to-speech"))
             req.httpMethod = "POST"
@@ -109,13 +110,25 @@ enum Probe {
                   var pcm = Data(base64Encoded: first) else { print("tts failed: \(String(data: data, encoding: .utf8)?.prefix(200) ?? "")"); return }
             if pcm.prefix(4) == "RIFF".data(using: .ascii)! { pcm = pcm.subdata(in: 44..<pcm.count) }
             print("speech: \(pcm.count / 32000) s")
-            let stt = SarvamSTT()
-            stt.connect()       // no wait: audio starts before the handshake, as with the mic
-            var i = 0
-            while i < pcm.count { stt.send(pcm.subdata(in: i..<min(i + 3200, pcm.count))); i += 3200; try await Task.sleep(nanoseconds: 100_000_000) }
-            let t0 = Date()
-            let (heard, lang) = await stt.finish()
-            print(String(format: "final after %.0f ms: \"%@\" (%@)", Date().timeIntervalSince(t0) * 1000, heard, lang ?? "?"))
+            // Same audio through every provider with a key, a few rounds each, so the numbers compare.
+            var providers: [STT.Provider] = [.sarvam]
+            if Keys.deepgram != nil { providers.append(.deepgram) }
+            let rounds = Int(rest.dropFirst().first ?? "3") ?? 3
+            for p in providers {
+                var times: [Double] = []
+                for _ in 0..<rounds {
+                    let stt = STT.make(p)
+                    stt.connect()       // no wait: audio starts before the handshake, as with the mic
+                    var i = 0
+                    while i < pcm.count { stt.send(pcm.subdata(in: i..<min(i + 3200, pcm.count))); i += 3200; try await Task.sleep(nanoseconds: 100_000_000) }
+                    let t0 = Date()
+                    let (heard, lang) = await stt.finish(timeout: 3)
+                    let ms = Date().timeIntervalSince(t0) * 1000
+                    times.append(ms)
+                    print(String(format: "%@ final after %.0f ms: \"%@\" (%@)", p.rawValue, ms, heard, lang ?? "?"))
+                }
+                print(String(format: "%@ median %.0f ms", p.rawValue, times.sorted()[times.count / 2]))
+            }
         case "audio-devices":
             print("default input is Bluetooth: \(AudioDevices.defaultInputIsBluetooth); built-in mic found: \(AudioDevices.builtInInput != nil) → recording from \(AudioDevices.defaultInputIsBluetooth && AudioDevices.builtInInput != nil ? "the built-in mic" : "the default input")")
         case "tts-dump":
@@ -424,7 +437,7 @@ enum Probe {
         case "stt":
             let secs = Double(rest.first ?? "4") ?? 4
             let mic = Microphone()
-            let stt = SarvamSTT()
+            let stt = STT.make(rest.dropFirst().first.flatMap(STT.Provider.init(rawValue:)) ?? STT.provider)
             stt.onPartial = { print("… \($0)") }
             stt.onError = { print("stt error: \($0)") }
             stt.connect()
@@ -434,7 +447,7 @@ enum Probe {
             try await Task.sleep(nanoseconds: UInt64(secs * 1e9))
             mic.stop()
             let t0 = Date()
-            let (text, lang) = await stt.finish()
+            let (text, lang) = await stt.finish(timeout: 3)
             print(String(format: "final (%@) after %.0f ms: %@", lang ?? "?", Date().timeIntervalSince(t0) * 1000, text))
         case "route":
             let ask = rest.joined(separator: " ")
