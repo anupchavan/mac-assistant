@@ -125,7 +125,8 @@ enum ContextCapture {
             let role: String = attr(focused, kAXRoleAttribute) ?? ""
             let value: String = (attr(focused, kAXValueAttribute) as String?) ?? ""
             ctx.focused = "\(role) \"\(value.prefix(500))\""
-            return attr(focused, kAXSelectedTextAttribute)
+            if let s: String = attr(focused, kAXSelectedTextAttribute) { return s }
+            return Selection.viaTextMarkers(focused)
         }
         var selection = readFocused()
         // Chrome/Electron expose the selection only once their tree is switched on; give it a moment to build.

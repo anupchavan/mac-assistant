@@ -19,10 +19,22 @@ enum Selection {
         return ok
     }
 
+    /// Web views (Safari, Chrome) keep the selection as a text-marker range rather than AXSelectedText.
+    /// Returns "" when the page is readable but nothing is selected, nil when it isn't readable at all.
+    static func viaTextMarkers(_ el: AXUIElement) -> String? {
+        var range: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(el, "AXSelectedTextMarkerRange" as CFString, &range) == .success,
+              let range else { return nil }
+        var text: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(el, "AXStringForTextMarkerRange" as CFString, range, &text) == .success
+        else { return "" }
+        return (text as? String) ?? ""
+    }
+
     /// ⌘C into the app, read the copied text, then restore whatever was on the clipboard.
     /// Nil when nothing was copied within the wait (no selection, or the app ignored ⌘C).
     @MainActor
-    static func viaClipboard(pid: pid_t, wait: TimeInterval = 0.3) async -> String? {
+    static func viaClipboard(pid: pid_t, wait: TimeInterval = 0.2) async -> String? {
         let pb = NSPasteboard.general
         let saved: [NSPasteboardItem] = (pb.pasteboardItems ?? []).map { item in
             let copy = NSPasteboardItem()
