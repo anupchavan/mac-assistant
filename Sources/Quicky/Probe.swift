@@ -15,6 +15,8 @@ import SwiftUI
 ///   Quicky --probe controls [seconds]          (after a delay, lists the front window's CONTROLS and how long reading them took)
 ///   Quicky --probe selection [seconds]         (after a delay, reads the front app's selected text: accessibility, then ⌘C fallback)
 ///   Quicky --probe pick 4 "unfollow them|join" [models…] (which control each model would press; never runs it)
+///   Quicky --probe music <tool> "<query or title|artist>" (runs one music extension tool)
+///   Quicky --probe extensions "ask|ask"        (which extensions the picker gives each ask, and how long it took)
 ///   Quicky --probe reflex "close this tab"     (the no-model fast path: prints the tool call it would make, never runs it)
 ///   Quicky --probe handoff "block this user"   (computer-use instruction only; never clicks)
 ///   Quicky --probe render <dir>                (offscreen PNGs of the panel states; nothing appears on screen)
@@ -80,6 +82,25 @@ enum Probe {
                 if case let .text(t) = e { if first == nil { first = Date() }; print(t, terminator: ""); fflush(stdout) }
             }
             print(String(format: "\n— TTFT %.0f ms, total %.0f ms", ((first ?? Date()).timeIntervalSince(t0)) * 1000, Date().timeIntervalSince(t0) * 1000))
+        case "music":
+            // Quicky --probe music music_search "kun faya kun"   (or music_album / lyrics "title|artist" / now_playing / music_credits "title|artist")
+            let tool = rest.first ?? "music_search"
+            let arg = rest.dropFirst().joined(separator: " ")
+            let parts = arg.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+            var a: [String: Any] = ["query": arg]
+            if ["lyrics", "music_credits"].contains(tool) { a = ["title": parts.first ?? "", "artist": parts.count > 1 ? parts[1] : ""] }
+            let t0 = Date()
+            let out = await Music.run(ToolCall(id: "p", name: tool, arguments: a, rawArguments: "")) ?? "not a music tool"
+            print(out)
+            print("— \(tool) \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
+        case "extensions":
+            // Quicky --probe extensions "who sang tum hi ho|open youtube|what's the weather"
+            let picker = await ExtensionPicker()
+            for ask in (rest.first ?? "who sang kun faya kun").split(separator: "|").map(String.init) {
+                let t0 = Date()
+                let ids = await picker.pick(final: ask, app: "Safari", url: "", wait: 2)
+                print("“\(ask)” → \(ids.isEmpty ? "core only" : ids.sorted().joined(separator: ", ")) (\(Int(Date().timeIntervalSince(t0) * 1000)) ms)")
+            }
         case "pick":
             // Which control would each model press? One capture of the front window, the same agent-route
             // context the app sends, every model asked every ask. Prints tool calls; never runs them.

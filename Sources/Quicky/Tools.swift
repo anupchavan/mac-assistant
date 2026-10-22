@@ -306,7 +306,7 @@ enum Tools {
                 p.waitUntilExit()
                 return p.terminationStatus == 0 ? "ran" : "error: shortcut failed"
             default:
-                return "error: unknown tool"
+                return await Extensions.run(call) ?? "error: unknown tool"
             }
         } catch {
             return "error: \(error.localizedDescription)"

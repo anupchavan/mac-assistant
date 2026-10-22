@@ -39,6 +39,9 @@ final class AppModel: ObservableObject {
     @Published var listening = false
     @Published var handsFree = false
     @Published var partial = ""
+    private let extensionPicker = ExtensionPicker()
+    /// Extensions whose tools this turn's model sees (picked while the user spoke).
+    private var turnExtensions: Set<String> = []
     @Published var draft = ""
     @Published var overlay: Overlay = .none
     @Published var selection = 0
@@ -258,7 +261,10 @@ final class AppModel: ObservableObject {
         captureContext()
         warmConnection()
         let s = STT.make()
-        s.onPartial = { [weak self] text in self?.partial = text }
+        s.onPartial = { [weak self] text in
+            self?.partial = text
+            self?.extensionPicker.hear(text, app: NSWorkspace.shared.frontmostApplication?.localizedName ?? "")
+        }
         s.onError = { [weak self] m in self?.notice = m }
         s.connect()
         stt = s
@@ -386,6 +392,7 @@ final class AppModel: ObservableObject {
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
                 return
             }
+            turnExtensions = await extensionPicker.pick(final: ask, app: ctx.appName, url: ctx.browserURL, wait: voice ? 0.15 : 0.4)
             // Selection the app won't expose: copy it, but only for asks about the screen, and after the
             // reflexes so "close this tab" never waits on it. Finder's ⌘C copies files; its selection is read separately.
             if ctx.selectionUnreadable, ctx.pid != 0, ctx.bundleID != "com.apple.finder", Router.looksAtScreen(ask),
@@ -541,7 +548,8 @@ final class AppModel: ObservableObject {
 
         var messages: [[String: Any]] = [["role": "system", "content": system]] + historyMessages()
         messages.append(["role": "user", "content": userContent])
-        let tools = Tools.declarations    // every route can act; the router is only a fast path
+        // Every route can act; the router is only a fast path. Extensions join only when picked for this ask.
+        let tools = Tools.declarations + Extensions.tools(for: turnExtensions)
         let maxTokens = route == .deep ? 4000 : (voice ? 900 : 1600)
 
         addStep(route == .deep ? "Thinking it through" : "Thinking")
@@ -626,6 +634,7 @@ final class AppModel: ObservableObject {
             return ToolCall(id: c.id.isEmpty ? "call_\(i)" : c.id, name: c.name, arguments: a, rawArguments: c.args)
         }
         if first.name == "press", let c = Controls.latest.value[Controls.id(toolCall(0, first))] { Log.info("press target: \(c.line)") }
+        for c in ordered.map(\.value) { if let id = Extensions.owner(of: c.name) { extensionPicker.used(id) } }
         func followUp(_ ran: [ToolCall], _ results: [String], maxTokens: Int, choice: String = "none") async throws {
             var f = messages
             f.append(["role": "assistant", "content": assistantText,
@@ -773,6 +782,7 @@ final class AppModel: ObservableObject {
     nonisolated static func runsEarly(_ call: ToolCall) -> Bool {
         guard !call.needsConfirm else { return false }
         return ["web_search", "open_url", "open_app", "press_shortcut", "press", "type_text", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
+            || Extensions.readOnly(call.name)
     }
 
     /// What to say after a tool that worked, or nil to let the model explain (errors, a press that changed
@@ -933,6 +943,7 @@ final class AppModel: ObservableObject {
     private func warmConnection() {
         guard Date().timeIntervalSince(lastWarm) > 20 else { return }
         lastWarm = Date()
+        ExtensionPicker.warm()
         var hosts = [Sarvam.base]
         // Gemini answers on Vertex in Mumbai; a cold TLS connection there cost 0.3-3 s on the first answer.
         if Gemini.available, [Gemini.answerModel, Gemini.actionModel].contains(where: { $0.hasPrefix("gemini") }),

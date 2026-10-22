@@ -338,3 +338,26 @@ final class OpenURLArgsTests: XCTestCase {
         XCTAssertEqual(many.statusText, "Opening 2 links")
     }
 }
+
+final class ExtensionTests: XCTestCase {
+    func testCuesPickMusic() {
+        XCTAssertEqual(Extensions.cueMatch("who sang this song"), ["music"])
+        XCTAssertEqual(Extensions.cueMatch("lyrics of tum hi ho"), ["music"])
+        XCTAssertEqual(Extensions.cueMatch("open youtube"), [])
+    }
+    func testOwnerAndReadOnly() {
+        XCTAssertEqual(Extensions.owner(of: "lyrics"), "music")
+        XCTAssertNil(Extensions.owner(of: "open_url"))
+        XCTAssertTrue(Extensions.readOnly("music_search"))
+    }
+    @MainActor func testPartialMatchesFinal() {
+        XCTAssertTrue(ExtensionPicker.close("who sang kun faya", "who sang kun faya kun"))
+        XCTAssertFalse(ExtensionPicker.close("open youtube", "who sang kun faya kun"))
+    }
+    func testSyncedLyricsAroundPosition() {
+        let lrc = "[00:01.00] one\n[00:05.00] two\n[00:09.50] three\n[00:12.00] four"
+        let out = LRCLib.around(lrc, at: 10)
+        XCTAssertTrue(out.contains("▶ three"))
+        XCTAssertEqual(LRCLib.strip("[00:01.00] one\n[00:05.00] two"), "one\ntwo")
+    }
+}
