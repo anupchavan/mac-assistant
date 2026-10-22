@@ -26,6 +26,16 @@ enum Gemini {
         return picked.hasPrefix("gemini") && !available ? "sarvam-105b" : picked
     }
 
+    /// The model for asks that act on the page (agent route with controls to press). Picking a control
+    /// is where sarvam-105b failed (3 of 18 right vs 14 of 18 for Gemini 3.5 Flash, 22 Oct), so actions
+    /// go to Gemini when it's set up, while talk keeps the faster answer model.
+    /// ASSISTANT_ACTION_MODEL overrides; "same" uses the answer model for everything.
+    static var actionModel: String {
+        let picked = Keys.setting("ASSISTANT_ACTION_MODEL", default: "gemini-3.5-flash")
+        if picked == "same" || !available { return answerModel }
+        return picked
+    }
+
     static func stream(model: String, messages: [[String: Any]], tools: [[String: Any]]?, toolChoice: String,
                        reasoning: String?, maxTokens: Int, temperature: Double?, json: Bool) -> AsyncThrowingStream<ChatEvent, Error> {
         AsyncThrowingStream { cont in

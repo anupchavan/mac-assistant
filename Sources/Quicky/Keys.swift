@@ -82,7 +82,7 @@ enum Keys {
             guard let f = find(names) else { return "missing" }
             return "found in \(f.source.rawValue) (\(f.value.count) chars)"
         }
-        return "Sarvam key: \(mark(sarvamNames))\nOpenAI key: \(mark(openAINames))\nDeepgram key: \(mark(deepgramNames)) · STT: \(STT.provider.rawValue)\nGoogle Cloud key: \(mark(vertexNames)) · project: \(Gemini.project == nil ? "missing" : "set") · answers: \(Gemini.answerModel)"
+        return "Sarvam key: \(mark(sarvamNames))\nOpenAI key: \(mark(openAINames))\nDeepgram key: \(mark(deepgramNames)) · STT: \(STT.provider.rawValue)\nGoogle Cloud key: \(mark(vertexNames)) · project: \(Gemini.project == nil ? "missing" : "set") · answers: \(Gemini.answerModel) · actions: \(Gemini.actionModel)"
     }
 }
 

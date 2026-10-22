@@ -386,11 +386,6 @@ final class AppModel: ObservableObject {
                 finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
                 return
             }
-            if await runControlPick(ask: ask, ctx: ctx, voice: voice) {
-                Log.time("turn control pick total", since: t0)
-                finishTurn(error: nil, workedFor: Date().timeIntervalSince(t0))
-                return
-            }
             // Selection the app won't expose: copy it, but only for asks about the screen, and after the
             // reflexes so "close this tab" never waits on it. Finder's ⌘C copies files; its selection is read separately.
             if ctx.selectionUnreadable, ctx.pid != 0, ctx.bundleID != "com.apple.finder", Router.looksAtScreen(ask),
@@ -494,7 +489,7 @@ final class AppModel: ObservableObject {
     private func answer(ask: String, ctx: ScreenContext, route: Route, language: String?, voice: Bool) async throws {
         let mode = voice ? "voice" : "typed"
         let fastModel = Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4")
-        let deepModel = Gemini.answerModel
+        let deepModel = route == .agent && !ctx.controls.isEmpty ? Gemini.actionModel : Gemini.answerModel
         // Only asks that point at the screen go to the vision model with the screenshot. A general question
         // ("when is Sarvam's 1T model launching?") goes to the main model, which answers from what it knows.
         let screenAsk = Router.looksAtScreen(ask)
@@ -576,6 +571,7 @@ final class AppModel: ObservableObject {
             guard i == 0 || (c.name == lead && ["web_search", "open_url"].contains(c.name)), Self.runsEarly(call) else { return }
             if c.name == "web_search", i == 0, prefetched != nil { return }
             if c.name == "open_url", early.count >= 5 { return }
+            if c.name == "press", notSetReply(call) != nil { return }
             if c.name != "web_search" { toolRanThisTurn = true }
             Log.time("tool \(c.name)#\(i) args complete, starting", since: t0)
             early[i] = Task.detached { await Tools.run(call, insertInto: pid) }
@@ -682,6 +678,13 @@ final class AppModel: ObservableObject {
             }
         }
         var confirmed = false
+        if let line = notSetReply(call) {
+            Log.info("refused model press: \(line)")
+            if voice && (tts == nil || ttsFinalReceived) { startTTS(language: language) }
+            appendAnswer(line, voice: voice)
+            if voice { flushTTS() }
+            return
+        }
         // The model may only press a consequential control (Block, Delete, Send) the ask actually names;
         // it once reached for Block while trying to unfollow. No card, no press: it hears why instead.
         if call.name == "press", call.needsConfirm, let c = Controls.latest.value[Controls.id(call)],
@@ -738,7 +741,7 @@ final class AppModel: ObservableObject {
 
         // Success on a plain action needs no second model trip and no words: the screen already shows it.
         if let reply = Self.localReply(batch, results: results, saidAlready: !assistantText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                                       language: language, ask: chats.indices.contains(chatIndex) ? chats[chatIndex].turns.last?.ask : nil) {
+                                       language: language) {
             Log.time("tool \(call.name) done, local reply (no follow-up model call)", since: t0)
             if !reply.isEmpty {
                 if voice && (tts == nil || ttsFinalReceived || confirmed) { startTTS(language: language) }
@@ -751,6 +754,13 @@ final class AppModel: ObservableObject {
         try await followUp(batch, results, maxTokens: 300)
     }
 
+    /// "Unfollow" while the page shows Follow: the line to say instead of pressing.
+    private func notSetReply(_ call: ToolCall) -> String? {
+        guard call.name == "press", let c = Controls.latest.value[Controls.id(call)],
+              let ask = chats.indices.contains(chatIndex) ? chats[chatIndex].turns.last?.ask : nil else { return nil }
+        return Controls.notSetReply(ask: ask, label: c.label)
+    }
+
     /// Tools that may start before the model finishes: no confirm, nothing to undo, nothing that needs the panel.
     nonisolated static func runsEarly(_ call: ToolCall) -> Bool {
         guard !call.needsConfirm else { return false }
@@ -761,16 +771,9 @@ final class AppModel: ObservableObject {
     /// nothing, tools whose result needs words). "" means say nothing: the change is right there on screen,
     /// and "Pressed Follow" would only read the UI back. Data the user can't see (a file moved, an event
     /// added) gets one short line.
-    nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?, ask: String? = nil) -> String? {
+    nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?) -> String? {
         guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") || Controls.needsNextStep($0) }) else { return nil }
         if ["open_url", "open_app", "press_shortcut", "press", "type_text", "reveal_or_open_file"].contains(first.name) {
-            // An unnamed shortcut is the one visible action worth naming: it may have been a wrong guess.
-            if first.name == "press_shortcut", !saidAlready {
-                let keys = first.string("keys")
-                guard let meaning = Reflex.reply(forKeys: keys) else { return "Pressed \(Tools.symbols(keys))." }
-                // "unfollow them" → cmd+t is a wrong guess; say what it did so it isn't silent.
-                if let ask, !Reflex.related(ask, meaning) { return "That pressed \(Tools.symbols(keys)), \(meaning.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: ".")))." }
-            }
             return ""
         }
         if let l = language, !l.hasPrefix("en") { return l == "hi-IN" && !saidAlready ? "Ho gaya." : (saidAlready ? "" : nil) }
@@ -817,49 +820,6 @@ final class AppModel: ObservableObject {
         let ok = await withCheckedContinuation { confirmContinuation = $0 }
         Log.info("confirm \(ok ? "approved" : "declined")")
         return ok
-    }
-
-    /// "Join the subreddit", "unfollow them": the control is picked in code (ControlPick), pressed, and for
-    /// an undo the item in the menu it opens is pressed too, with the confirm card where it matters. If the
-    /// expected item isn't there, nothing else gets pressed: Quicky says so. Returns false to let the model try.
-    private func runControlPick(ask: String, ctx: ScreenContext, voice: Bool) async -> Bool {
-        // QUICKY_CONTROLPICK=0 lets the model choose every press (to test whether the code pick is still needed).
-        guard Keys.setting("QUICKY_CONTROLPICK", default: "1") != "0",
-              let p = ControlPick.pick(ask, in: ctx.controls) else { return false }
-        Log.info("control pick: \(p.control.line)\(p.then.isEmpty ? "" : " then \(p.then.joined(separator: "/"))")")
-        toolRanThisTurn = true
-        func press(_ c: Control) async -> String? {
-            let call = ToolCall(id: "pick", name: "press", arguments: ["id": c.id], rawArguments: "{\"id\": \(c.id)}")
-            if call.needsConfirm {
-                if voice { flushTTS() }
-                addStep("Waiting for you to confirm")
-                guard await askConfirm(tool: call) else { return nil }
-            }
-            addStep(call.statusText)
-            let r = await Tools.run(call, insertInto: ctx.pid)
-            Log.info("control pick → \(r.prefix(200))")
-            return r
-        }
-        func say(_ s: String) {
-            if voice && (tts == nil || ttsFinalReceived) { startTTS(language: nil) }
-            appendAnswer(s, voice: voice)
-            if voice { flushTTS() }
-        }
-        guard let r1 = await press(p.control) else { appendAnswer(voice ? "" : "Cancelled.", voice: false); return true }
-        if r1.hasPrefix("error") { say("That button didn't respond."); return true }
-        if p.then.isEmpty {
-            if r1.hasSuffix(Controls.unchangedMarker) { say("I pressed \(p.control.label), but nothing changed.") }
-            noteOnTurn("Quicky did: \(r1.prefix(120))")
-            return true
-        }
-        guard let item = ControlPick.item(p.then, in: Controls.lastOpened) else {
-            say("I opened \(p.control.label), but there's no \(p.then[0].capitalized) in it.")
-            return true
-        }
-        guard let r2 = await press(item) else { appendAnswer(voice ? "" : "Cancelled.", voice: false); return true }
-        if r2.hasPrefix("error") { say("\(item.label) didn't respond.") }
-        noteOnTurn("Quicky did: \(r1.prefix(80)), then \(r2.prefix(80))")
-        return true
     }
 
     private func askConfirm(computer: ComputerUser.Handoff) async -> Bool {

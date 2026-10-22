@@ -93,8 +93,7 @@ enum Probe {
             print("\(ctx.appName) · \(ctx.browserURL) · \(ctx.controls.count) controls")
             let block = ctx.block(language: nil, outputMode: "voice", includeOCR: false, includeLinks: true)
             for ask in asks {
-                let code = ControlPick.pick(ask, in: ctx.controls)
-                print("\n“\(ask)” code pick: \(code.map { $0.control.line + ($0.then.isEmpty ? "" : " then \($0.then.joined(separator: "/"))") } ?? "none")")
+                print("\n“\(ask)”")
                 for model in models {
                     let messages: [[String: Any]] = [["role": "system", "content": Prompts.system],
                                                      ["role": "user", "content": block + "\n\nASK: \(ask)"]]
@@ -118,7 +117,7 @@ enum Probe {
                         if c.name == "press", let d = c.args.data(using: .utf8),
                            let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                            let id = (j["id"] as? NSNumber)?.intValue, let ctl = ctx.controls.first(where: { $0.id == id }) {
-                            return "press → \(ctl.line)"
+                            return "press → \(ctl.line)" + (Controls.notSetReply(ask: ask, label: ctl.label).map { " (refused: “\($0)”)" } ?? "")
                         }
                         return "\(c.name) \(c.args)"
                     }

@@ -28,9 +28,6 @@ struct Control {
 enum Controls {
     /// The latest capture's controls by id, for the press tool. Replaced on every capture.
     static let latest = Locked<[Int: Control]>([:])
-    /// What the last press opened (a menu or dialog), for a second press picked in code.
-    static let lastOpenedBox = Locked<[Control]>([])
-    static var lastOpened: [Control] { lastOpenedBox.value }
 
     static let roles: [String: String] = [
         "AXButton": "button", "AXCheckBox": "checkbox", "AXRadioButton": "radio", "AXPopUpButton": "popup",
@@ -192,7 +189,6 @@ enum Controls {
     /// Instagram's Following → Unfollow), changed the screen, or changed nothing.
     static func press(_ id: Int, pid: pid_t?) async -> String {
         guard let c = latest.value[id] else { return "error: no control \(id) on screen now" }
-        lastOpenedBox.value = []
         let beforeControls = Array(latest.value.values)
         let before = Set(beforeControls.map(\.key))
         AXUIElementSetMessagingTimeout(c.element, 0.3)
@@ -214,7 +210,7 @@ enum Controls {
         }
         let nowKeys = Set(latest.value.values.map(\.key))
         let gone = beforeControls.filter { !nowKeys.contains($0.key) && $0.key != c.key }
-        if let opened = openedSurface(fresh, pressed: c) { lastOpenedBox.value = opened; return did + openedMarker + lines(opened, max: 30) }
+        if let opened = openedSurface(fresh, pressed: c) { return did + openedMarker + lines(opened, max: 30) }
         if fresh.isEmpty && gone.isEmpty && nowKeys.contains(c.key) { return did + unchangedMarker }
         if fresh.isEmpty && !gone.isEmpty { return did + closedMarker + gone.prefix(12).map { "“\($0.label)”" }.joined(separator: ", ") }
         return did
@@ -291,5 +287,21 @@ enum Controls {
     /// The CONTROLS block: at most `max` lines.
     static func lines(_ controls: [Control], max: Int = 80) -> String {
         controls.prefix(max).map(\.line).joined(separator: "\n")
+    }
+
+    /// Undo asks and the button that means the thing isn't done yet. "Unfollow" when the page shows Follow
+    /// would press Follow and do the opposite; every model tried did exactly that.
+    static let notYet: [String: (label: String, reply: String)] = [
+        "unfollow": ("follow", "You're not following them."), "leave": ("join", "You're not a member."),
+        "unsubscribe": ("subscribe", "You're not subscribed."), "unlike": ("like", "You haven't liked it."),
+        "unsave": ("save", "It isn't saved."), "unstar": ("star", "It isn't starred."),
+    ]
+
+    /// What to say instead of pressing `label` for `ask`, or nil when the press is fine.
+    static func notSetReply(ask: String, label: String) -> String? {
+        func words(_ s: String) -> [String] { s.lowercased().split { !$0.isLetter }.map(String.init) }
+        guard let first = words(label).first else { return nil }
+        let askWords = Set(words(ask))
+        return notYet.first { askWords.contains($0.key) && $0.value.label == first }?.value.reply
     }
 }
