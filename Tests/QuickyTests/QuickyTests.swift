@@ -89,6 +89,15 @@ final class RouterTests: XCTestCase {
         XCTAssertNotEqual(Router.route("Click.", app: "Safari", computerUseAvailable: true), .computer)
         XCTAssertEqual(Router.route("from the first keep like 09:35 and merge both videos", app: "Finder", computerUseAvailable: true), .agent)
     }
+    func testScreenCues() {
+        XCTAssertFalse(Router.looksAtScreen("When is Sarvam AI's one trillion parameter model launching?"))
+        XCTAssertFalse(Router.looksAtScreen("what's the capital of Australia"))
+        XCTAssertTrue(Router.looksAtScreen("what does this mean"))
+        XCTAssertTrue(Router.looksAtScreen("summarise"))
+        XCTAssertTrue(Router.looksAtScreen("isko simple mein samjhao"))
+        XCTAssertTrue(Router.looksAtScreen("ఈ ఫైల్ దేని గురించి?"))
+        XCTAssertTrue(Router.looksAtScreen("what's the error"))
+    }
     func testSpeechCleaning() {
         XCTAssertEqual(AppModel.cleanForSpeech("**Bold** see https://x.com/a now"), "Bold see the link now")
     }
