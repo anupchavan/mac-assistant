@@ -1,0 +1,20 @@
+{
+  "id": "web",
+  "name": "Web search",
+  "version": "1.0.0",
+  "description": "Searches the web for anything current or uncertain. Built into Quicky; can be turned off.",
+  "always": true,
+  "main": "native",
+  "permissions": { "hosts": [], "applescript": [], "secrets": [] },
+  "tools": {
+    "search": {
+      "description": "Search the web. Use it for anything current or that you aren't sure of: news, launches and release dates, prices, scores, weather, recent versions, who holds a role now. Returns dated excerpts.",
+      "effect": "read",
+      "input": {
+        "type": "object",
+        "properties": { "query": { "type": "string", "description": "A short search query in English, with names spelled out" } },
+        "required": ["query"]
+      }
+    }
+  }
+}

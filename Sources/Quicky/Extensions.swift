@@ -1,54 +1,18 @@
 import AppKit
 import Foundation
 
-/// A group of tools that joins a turn only when the ask needs it. Core tools are always there; an
-/// extension's tools are added per turn, so the model never has to "search for tools" first and the
-/// prompt doesn't grow with every extension added.
-///
-/// To add one: write an enum that conforms, list it in `Extensions.all`. `when` is the one line the picker
-/// judges each ask against, so make it describe asks, not features.
-protocol QuickyExtension {
-    static var id: String { get }
-    /// A yes/no statement about the ask: "The user wants to know about a song, album, artist or lyrics".
-    static var when: String { get }
-    /// A regex that picks it locally when the picker hasn't answered in time.
-    static var cues: String { get }
-    static var tools: [[String: Any]] { get }
-    /// Tools that only read (lookups), so they may start while the model is still streaming.
-    static var readOnly: Set<String> { get }
-    /// Runs one of its tools, or nil when the call isn't one of them.
-    static func run(_ call: ToolCall) async -> String?
-}
-
-extension QuickyExtension {
-    static var names: Set<String> {
-        Set(tools.compactMap { ($0["function"] as? [String: Any])?["name"] as? String })
-    }
-}
-
+/// The picker's view of installed extensions (ExtensionHost loads them; docs/extensions.md).
+/// Core tools are always there; an extension's tools join a turn only when the ask needs them, so the
+/// model never has to "search for tools" first and the prompt doesn't grow with every install.
 enum Extensions {
-    static let all: [any QuickyExtension.Type] = [Music.self]
-
-    static func tools(for ids: Set<String>) -> [[String: Any]] {
-        all.filter { ids.contains($0.id) }.flatMap { $0.tools }
-    }
-
-    static func run(_ call: ToolCall) async -> String? {
-        for e in all { if let r = await e.run(call) { return r } }
-        return nil
-    }
-
-    static func owner(of tool: String) -> String? { all.first { $0.names.contains(tool) }?.id }
-    static func readOnly(_ tool: String) -> Bool { all.contains { $0.readOnly.contains(tool) } }
+    static func owner(of tool: String) -> String? { ExtensionHost.owner(of: tool) }
+    /// Lookups only, so they may start while the model is still streaming.
+    static func readOnly(_ tool: String) -> Bool { ExtensionHost.effect(of: tool) == .read }
 
     static func cueMatch(_ text: String) -> Set<String> {
-        Set(all.filter { text.range(of: $0.cues, options: [.regularExpression, .caseInsensitive]) != nil }.map { $0.id })
-    }
-
-    /// Helper for extensions: a function declaration in the same shape as Tools.declarations.
-    static func fn(_ name: String, _ desc: String, _ props: [String: Any], _ req: [String]) -> [String: Any] {
-        ["type": "function", "function": ["name": name, "description": desc,
-                                          "parameters": ["type": "object", "properties": props, "required": req]]]
+        Set(ExtensionHost.pickable.filter { m in
+            m.cueRegex.map { text.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil } ?? false
+        }.map(\.id))
     }
 }
 
@@ -73,7 +37,7 @@ final class ExtensionPicker {
 
     /// Live transcript text. Asks at most every 350 ms and only when a few new words have arrived.
     func hear(_ partial: String, app: String) {
-        guard Self.key != nil, !Extensions.all.isEmpty else { return }
+        guard Self.key != nil, !ExtensionHost.pickable.isEmpty else { return }
         let words = partial.split(separator: " ").count
         guard words >= 2, Date().timeIntervalSince(lastAsked) > 0.35 else { return }
         if let f = inFlight, f.text.split(separator: " ").count >= words - 1 { return }
@@ -139,7 +103,8 @@ final class ExtensionPicker {
         if !url.isEmpty { state["page"] = url }
         if !previous.isEmpty { state["previous_ask"] = previous }
         var questions: [String: Any] = [:]
-        for e in Extensions.all { questions[e.id] = ["type": "noul", "instructions": e.when] }
+        for e in ExtensionHost.pickable { questions[e.id] = ["type": "noul", "instructions": e.when] }
+        guard !questions.isEmpty else { return nil }
         let body: [String: Any] = ["model": "jev-latest", "questions": questions,
                                    "state": String(data: try! JSONSerialization.data(withJSONObject: state), encoding: .utf8)!]
         var req = URLRequest(url: URL(string: "https://api.typesafe.ai/v1/systemone")!)

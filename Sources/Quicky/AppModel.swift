@@ -108,6 +108,8 @@ final class AppModel: ObservableObject {
         if let last = initial.last?.updatedAt { lastUsed = last }
         player.onDrained = { [weak self] in self?.playbackDrained() }
         hotkey.onGesture = { [weak self] g in self?.gesture(g) }
+        // A `run` program that reaches a write/external tool pauses on the same confirm card as a direct call.
+        Composer.confirm.value = { [weak self] call in await self?.confirmFromProgram(call) ?? false }
         hotkey.onEscape = { [weak self] in self?.escape() ?? false }
         hotkey.onUserMouse = { [weak self] dx, dy, clicked in self?.userMouse(dx: dx, dy: dy, clicked: clicked) }
     }
@@ -517,7 +519,7 @@ final class AppModel: ObservableObject {
         Log.info("screen ask: \(screenAsk)")
         let useVision = visionAvailable && ctx.screenshot != nil && screenAsk
         searchPrefetch?.cancel(); searchPrefetch = nil
-        if WebSearch.available, Router.wantsFresh(ask) {
+        if WebSearch.available, ExtensionHost.isEnabled("web"), Router.wantsFresh(ask) {
             searchPrefetch = Task.detached { await WebSearch.run(query: ask) }
         }
         let system = Prompts.system     // identical on every turn so the prefix caches
@@ -557,7 +559,7 @@ final class AppModel: ObservableObject {
         var messages: [[String: Any]] = [["role": "system", "content": system]] + historyMessages()
         messages.append(["role": "user", "content": userContent])
         // Every route can act; the router is only a fast path. Extensions join only when picked for this ask.
-        let tools = Tools.declarations + Extensions.tools(for: turnExtensions)
+        let tools = Tools.builtIn + ExtensionHost.declarations(for: turnExtensions)
         let maxTokens = route == .deep ? 4000 : (voice ? 900 : 1600)
 
         addStep(route == .deep ? "Thinking it through" : "Thinking")
@@ -825,6 +827,8 @@ final class AppModel: ObservableObject {
     /// added) gets one short line.
     nonisolated static func localReply(_ calls: [ToolCall], results: [String], saidAlready: Bool, language: String?) -> String? {
         guard let first = calls.first, !results.contains(where: { $0.hasPrefix("error") || Controls.needsNextStep($0) }) else { return nil }
+        // A program's own sentence, its question for the user, or an extension result that says what to say.
+        if first.name == "run" || ExtensionHost.tool(first.name) != nil { return Composer.spoken(results[0]) }
         if ["open_url", "open_app", "press_shortcut", "press", "type_text", "reveal_or_open_file"].contains(first.name) {
             return ""
         }
@@ -863,6 +867,15 @@ final class AppModel: ObservableObject {
     }
 
     // MARK: - Confirm card
+
+    private func confirmFromProgram(_ call: ToolCall) async -> Bool {
+        flushTTS()
+        addStep("Waiting for you to confirm")
+        let ok = await askConfirm(tool: call)
+        if let i = steps.indices.last { steps[i].state = ok ? .done : .error }
+        if ok { addStep(call.statusText) }
+        return ok
+    }
 
     private func askConfirm(tool: ToolCall) async -> Bool {
         pendingTool = tool
@@ -978,6 +991,7 @@ final class AppModel: ObservableObject {
         guard Date().timeIntervalSince(lastWarm) > 20 else { return }
         lastWarm = Date()
         ExtensionPicker.warm()
+        DispatchQueue.global(qos: .utility).async { ExtensionHost.warm() }
         var hosts = [Sarvam.base]
         // Gemini answers on Vertex in Mumbai; a cold TLS connection there cost 0.3-3 s on the first answer.
         if Gemini.available, [Gemini.answerModel, Gemini.actionModel].contains(where: { $0.hasPrefix("gemini") }),

@@ -1,0 +1,87 @@
+{
+  "id": "music",
+  "name": "Music",
+  "version": "1.0.0",
+  "description": "Songs, albums, lyrics, credits and what's playing, including soundtracks and songs not on Apple Music in your country.",
+  "when": "The user wants to know something about a song, album, artist or soundtrack (who sang it, which film or album it's from, release year, tracklist, credits), wants lyrics, asks what song is playing, or wants to open or download a song or album.",
+  "cues": ["song", "songs", "lyrics?", "album", "singer", "sang", "sung", "track", "tracklist", "ost", "soundtrack", "playing", "gaana", "gana", "gaane", "bol", "music"],
+  "permissions": {
+    "hosts": ["music.youtube.com", "itunes.apple.com", "lrclib.net", "musicbrainz.org"],
+    "applescript": ["Music", "Spotify"],
+    "secrets": []
+  },
+  "main": "index.js",
+  "tools": {
+    "search": {
+      "description": "Find songs, albums or artists, including soundtracks, anime/game music and songs not on Apple Music here. Use it to identify a song, answer who sang it or which film it's from, or get its links. Each result has apple (this country's store, empty if missing), appleOther (another store that has it, for downloading) and youtube links, plus match (0-1).",
+      "effect": "read",
+      "timeoutMs": 5000,
+      "input": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "Song, album or artist words as the user said them, plus any film or show" },
+          "kind": { "type": "string", "enum": ["song", "album", "artist"], "description": "Default song" }
+        },
+        "required": ["query"]
+      },
+      "output": {
+        "type": "object",
+        "properties": {
+          "store": { "type": "string" },
+          "results": { "type": "array", "items": { "type": "object", "properties": {
+            "title": { "type": "string" }, "artists": { "type": "string" }, "album": { "type": "string" }, "year": { "type": "string" },
+            "length": { "type": "string" }, "seconds": { "type": "number" }, "genre": { "type": "string" },
+            "apple": { "type": "string" }, "appleOther": { "type": "string" }, "appleOtherStore": { "type": "string" },
+            "youtube": { "type": "string" }, "match": { "type": "number" } } } }
+        }
+      },
+      "examples": [
+        { "input": { "query": "kun faya kun" }, "expect": "results[0].artists contains Rahman" },
+        { "input": { "query": "gurenge lisa" }, "expect": "results.length > 0" }
+      ]
+    },
+    "album": {
+      "description": "An album or soundtrack's tracklist with release year, label and links.",
+      "effect": "read",
+      "timeoutMs": 5000,
+      "input": { "type": "object", "properties": { "query": { "type": "string", "description": "Album or film name, with the artist if known" } }, "required": ["query"] },
+      "output": { "type": "object", "properties": {
+        "title": { "type": "string" }, "artists": { "type": "string" }, "year": { "type": "string" }, "label": { "type": "string" },
+        "apple": { "type": "string" }, "youtube": { "type": "string" },
+        "tracks": { "type": "array", "items": { "type": "object", "properties": { "n": { "type": "integer" }, "title": { "type": "string" }, "artists": { "type": "string" }, "length": { "type": "string" }, "seconds": { "type": "number" } } } } } },
+      "examples": [{ "input": { "query": "rockstar a r rahman" }, "expect": "tracks.length > 5" }]
+    },
+    "lyrics": {
+      "description": "Lyrics of a song. With no title, the song playing now, with the line being sung marked ▶.",
+      "effect": "read",
+      "timeoutMs": 6000,
+      "input": { "type": "object", "properties": {
+        "title": { "type": "string" }, "artist": { "type": "string" }, "album": { "type": "string" },
+        "seconds": { "type": "number", "description": "Song length in seconds, if known from music_search; improves the match" } } },
+      "output": { "type": "object", "properties": {
+        "title": { "type": "string" }, "artists": { "type": "string" }, "text": { "type": "string" }, "synced": { "type": "boolean" },
+        "position": { "type": "number" }, "source": { "type": "string" } } },
+      "examples": [{ "input": { "title": "Tum Hi Ho", "artist": "Arijit Singh" }, "expect": "text.length > 100" }]
+    },
+    "now_playing": {
+      "description": "The song playing now in Music or Spotify: title, artist, album, length and position.",
+      "effect": "read",
+      "timeoutMs": 2000,
+      "input": { "type": "object", "properties": {} },
+      "output": { "type": "object", "properties": {
+        "playing": { "type": "boolean" }, "title": { "type": "string" }, "artists": { "type": "string" }, "album": { "type": "string" },
+        "seconds": { "type": "number" }, "position": { "type": "number" }, "app": { "type": "string" } } },
+      "examples": [{ "input": {} }]
+    },
+    "credits": {
+      "description": "Who wrote, composed and produced a song (slow, about 3 s).",
+      "effect": "read",
+      "timeoutMs": 9000,
+      "input": { "type": "object", "properties": { "title": { "type": "string" }, "artist": { "type": "string" } }, "required": ["title"] },
+      "output": { "type": "object", "properties": {
+        "title": { "type": "string" }, "artists": { "type": "string" }, "firstRelease": { "type": "string" },
+        "credits": { "type": "array", "items": { "type": "object", "properties": { "role": { "type": "string" }, "name": { "type": "string" } } } } } },
+      "examples": [{ "input": { "title": "Kun Faya Kun", "artist": "A.R. Rahman" }, "expect": "credits.length > 0" }]
+    }
+  }
+}

@@ -370,30 +370,82 @@ final class OpenURLArgsTests: XCTestCase {
 }
 
 final class ExtensionTests: XCTestCase {
+    static let repo = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+    static let musicDir = repo.appendingPathComponent("extensions/directory/music")
+
+    override func setUp() { ExtensionHost.load(extra: [Self.musicDir]) }
+
+    func testManifestsLoad() {
+        let ids = ExtensionHost.all.map(\.id)
+        XCTAssertTrue(ids.contains("music")); XCTAssertTrue(ids.contains("web"))
+        XCTAssertEqual(ExtensionHost.tool("music_search")?.1.effect, .read)
+        XCTAssertTrue(ExtensionHost.all.first { $0.id == "web" }!.always)
+    }
+    func testWebSearchIsACoreExtension() {
+        let names = { (d: [[String: Any]]) in d.compactMap { ($0["function"] as? [String: Any])?["name"] as? String } }
+        XCTAssertFalse(names(Tools.builtIn).contains("web_search"))
+        XCTAssertTrue(names(Tools.declarations).contains("web_search"))
+        XCTAssertFalse(names(Tools.declarations).contains("run"))          // nothing to combine without a picked extension
+        let turn = names(ExtensionHost.declarations(for: ["music"]))
+        XCTAssertTrue(turn.contains("music_search")); XCTAssertTrue(turn.contains("run"))
+    }
     func testCuesPickMusic() {
         XCTAssertEqual(Extensions.cueMatch("who sang this song"), ["music"])
         XCTAssertEqual(Extensions.cueMatch("lyrics of tum hi ho"), ["music"])
         XCTAssertEqual(Extensions.cueMatch("open youtube"), [])
     }
     func testOwnerAndReadOnly() {
-        XCTAssertEqual(Extensions.owner(of: "lyrics"), "music")
+        XCTAssertEqual(Extensions.owner(of: "music_lyrics"), "music")
         XCTAssertNil(Extensions.owner(of: "open_url"))
         XCTAssertTrue(Extensions.readOnly("music_search"))
+        XCTAssertFalse(ToolCall(id: "c", name: "music_search", arguments: [:], rawArguments: "{}").needsConfirm)
     }
     @MainActor func testPartialMatchesFinal() {
         XCTAssertTrue(ExtensionPicker.close("who sang kun faya", "who sang kun faya kun"))
         XCTAssertFalse(ExtensionPicker.close("open youtube", "who sang kun faya kun"))
     }
-    func testAppleLinkDropsTracking() {
-        XCTAssertEqual(Music.appleLink("https://music.apple.com/in/album/kun-faya-kun/1440?i=1441&uo=4"),
+    func testMusicCodeHelpers() throws {
+        let m = try ExtensionManifest.load(Self.musicDir, core: false)
+        let rt = try JSExtension(m)
+        XCTAssertEqual(Set(rt.exportedNames()), Set(m.tools.map(\.name)))
+        XCTAssertEqual(rt.evaluate("appleLink('https://music.apple.com/in/album/kun-faya-kun/1440?i=1441&uo=4')") as? String,
                        "https://music.apple.com/in/album/kun-faya-kun/1440?i=1441")
-        XCTAssertEqual(Music.appleLink("https://music.apple.com/in/album/rockstar/1440?uo=4"), "https://music.apple.com/in/album/rockstar/1440")
+        XCTAssertTrue((rt.evaluate("around('[00:01.00] one\\n[00:05.00] two\\n[00:09.50] three\\n[00:12.00] four', 10)") as? String ?? "").contains("▶ three"))
+        XCTAssertEqual(rt.evaluate("same({title:'紅蓮華 - Gurenge',artists:'LiSA',seconds:240},{title:'Gurenge',artists:'LiSA',seconds:238})") as? Bool, true)
+        XCTAssertEqual(rt.evaluate("same({title:'Tum Hi Ho',artists:'Arijit Singh'},{title:'Tum Hi Ho',artists:'Someone Else'})") as? Bool, false)
     }
-    func testSyncedLyricsAroundPosition() {
-        let lrc = "[00:01.00] one\n[00:05.00] two\n[00:09.50] three\n[00:12.00] four"
-        let out = LRCLib.around(lrc, at: 10)
-        XCTAssertTrue(out.contains("▶ three"))
-        XCTAssertEqual(LRCLib.strip("[00:01.00] one\n[00:05.00] two"), "one\ntwo")
+    func testCheckerPassesMusic() {
+        XCTAssertEqual(Checker.check(Self.musicDir, runExamples: false), [])
+    }
+    func testPickChoosesOnlyAClearWinner() async {
+        let clear = await Composer.run("""
+        return pick([{title:'Nanchaku (Remix)',artists:'Someone'},{title:'Nanchaku',artists:'Seedhe Maut',seconds:200}], {title:'nanchaku', artists:'seedhe maut'}).artists
+        """)
+        XCTAssertEqual(clear, "say: Seedhe Maut")
+        let unclear = await Composer.run("""
+        return pick([{title:'Nanchaku',artists:'Seedhe Maut',year:'2019',seconds:200},{title:'Nanchaku',artists:'Seedhe Maut',year:'2023',seconds:300},{title:'Nanchaku',artists:'Seedhe Maut',seconds:201}], {title:'nanchaku'})
+        """)
+        XCTAssertTrue(unclear.hasPrefix("ask: Which one: Nanchaku by Seedhe Maut"), unclear)
+        let wrongLength = await Composer.run("return pick([{title:'Nanchaku',artists:'Seedhe Maut',seconds:200}], {title:'nanchaku', seconds: 260})")
+        XCTAssertTrue(wrongLength.hasPrefix("ask: "), wrongLength)
+    }
+    func testProgramErrorsAndLimits() async {
+        XCTAssertTrue(await Composer.run("return nope(").hasPrefix("error: "))
+        XCTAssertTrue(await Composer.run("await no_such_tool({})").hasPrefix("error: "))
+        let r = await Composer.run("return { n: 1 }")
+        XCTAssertEqual(JSBridge.parse(r) as? [String: Int], ["n": 1])
+    }
+    func testSpokenResults() {
+        XCTAssertEqual(Composer.spoken("say: Downloaded 3 songs."), "Downloaded 3 songs.")
+        XCTAssertEqual(Composer.spoken(#"{"done":true,"opened":["https://x.com"]}"#), "")
+        XCTAssertEqual(Composer.spoken(#"{"say":"Copied."}"#), "Copied.")
+        XCTAssertNil(Composer.spoken(#"{"results":[]}"#))
+    }
+    func testExpectations() {
+        let v: [String: Any] = ["results": [["artists": "A. R. Rahman", "title": "Kun Faya Kun"]]]
+        XCTAssertTrue(Expect.holds("results[0].artists contains Rahman", on: v))
+        XCTAssertTrue(Expect.holds("results.length > 0", on: v))
+        XCTAssertFalse(Expect.holds("results.length > 1", on: v))
     }
 }
 

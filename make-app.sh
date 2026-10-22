@@ -14,6 +14,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/Fonts"
 cp "$BIN" "$APP/Contents/MacOS/Quicky"
 cp Info.plist "$APP/Contents/Info.plist"
 cp Resources/Fonts/*.ttf "$APP/Contents/Resources/Fonts/"
+cp -R extensions/core "$APP/Contents/Resources/Extensions"   # core extensions ship inside the app (web search)
 
 # A stable signing identity keeps macOS privacy grants (Accessibility, Screen Recording, Input
 # Monitoring) across rebuilds. Ad-hoc signing works too, but you'll re-grant after every build.

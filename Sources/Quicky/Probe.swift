@@ -82,17 +82,20 @@ enum Probe {
                 if case let .text(t) = e { if first == nil { first = Date() }; print(t, terminator: ""); fflush(stdout) }
             }
             print(String(format: "\n— TTFT %.0f ms, total %.0f ms", ((first ?? Date()).timeIntervalSince(t0)) * 1000, Date().timeIntervalSince(t0) * 1000))
-        case "music":
-            // Quicky --probe music music_search "kun faya kun"   (or music_album / lyrics "title|artist" / now_playing / music_credits "title|artist")
+        case "ext":
+            // Quicky --probe ext music_search '{"query":"kun faya kun"}'
             let tool = rest.first ?? "music_search"
-            let arg = rest.dropFirst().joined(separator: " ")
-            let parts = arg.split(separator: "|").map { $0.trimmingCharacters(in: .whitespaces) }
-            var a: [String: Any] = ["query": arg]
-            if ["lyrics", "music_credits"].contains(tool) { a = ["title": parts.first ?? "", "artist": parts.count > 1 ? parts[1] : ""] }
+            let input = (JSBridge.parse(rest.dropFirst().joined(separator: " ")) as? [String: Any]) ?? [:]
+            guard case let (m, t)? = ExtensionHost.tool(tool) else { print("no tool \(tool); installed: \(ExtensionHost.enabled.flatMap { $0.tools.map(\.fullName) })"); return }
             let t0 = Date()
-            let out = await Music.run(ToolCall(id: "p", name: tool, arguments: a, rawArguments: "")) ?? "not a music tool"
-            print(out)
+            let r = await ExtensionHost.invoke(m, t, input)
+            print(r.error.map { "error: \($0)" } ?? ExtensionHost.pretty(r.value ?? NSNull()))
             print("— \(tool) \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
+        case "run":
+            // Quicky --probe run 'const { results } = await music_search({ query: "nanchaku" }); return pick(results, { title: "nanchaku" })'
+            let t0 = Date()
+            print(await Composer.run(rest.joined(separator: " ")))
+            print("— run \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
         case "extensions":
             // Quicky --probe extensions "who sang tum hi ho|open youtube|what's the weather"
             let picker = await ExtensionPicker()
