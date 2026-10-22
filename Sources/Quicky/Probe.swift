@@ -55,6 +55,7 @@ enum Probe {
             ctx.pid = app.processIdentifier
             let t0 = Date()
             ContextCapture.readAX(&ctx)
+            print("focused: \(ctx.focused.isEmpty ? "none" : String(ctx.focused.prefix(80)))")
             print("\(app.localizedName ?? "?"): accessibility \(ctx.selectionUnreadable ? "can't read the selection" : "“\(ctx.selection.prefix(200))”") (\(Int(Date().timeIntervalSince(t0) * 1000)) ms)")
             if ctx.selectionUnreadable {
                 let s = await Selection.viaClipboard(pid: ctx.pid)

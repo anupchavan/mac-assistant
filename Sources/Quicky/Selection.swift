@@ -22,9 +22,17 @@ enum Selection {
     /// Web views (Safari, Chrome) keep the selection as a text-marker range rather than AXSelectedText.
     /// Returns "" when the page is readable but nothing is selected, nil when it isn't readable at all.
     static func viaTextMarkers(_ el: AXUIElement) -> String? {
+        // The range lives on the page's AXWebArea; the focused element is often a link or group inside it.
+        var node: AXUIElement? = el
         var range: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(el, "AXSelectedTextMarkerRange" as CFString, &range) == .success,
-              let range else { return nil }
+        for _ in 0..<12 {
+            guard let n = node else { return nil }
+            let err = AXUIElementCopyAttributeValue(n, "AXSelectedTextMarkerRange" as CFString, &range)
+            if err == .success, range != nil { node = n; break }
+            if err == .noValue { return "" }   // a web area with nothing selected
+            node = ContextCapture.attr(n, kAXParentAttribute)
+        }
+        guard let el = node, let range else { return nil }
         var text: CFTypeRef?
         guard AXUIElementCopyParameterizedAttributeValue(el, "AXStringForTextMarkerRange" as CFString, range, &text) == .success
         else { return "" }
