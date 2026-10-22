@@ -584,6 +584,7 @@ final class AppModel: ObservableObject {
         let t0 = Date()
         var inThink = false
         var assistantText = ""
+        var answeredBy = model      // the model that actually replied (differs after a fallback)
         func startEarly(_ i: Int) {
             guard early[i] == nil, let c = calls[i], !c.name.isEmpty, c.args.hasSuffix("}"),
                   let a = try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any] else { return }
@@ -611,7 +612,7 @@ final class AppModel: ObservableObject {
                 if inThink {
                     if let r = t.range(of: "</think>") { inThink = false; t = String(t[r.upperBound...]) } else { continue }
                 }
-                if !answerStarted { Log.time("first token \(model)", since: t0) }
+                if !answerStarted { Log.time("first token \(answeredBy)", since: t0) }
                 assistantText += t
                 appendAnswer(answerStarted ? t : String(t.drop(while: { $0.isWhitespace })), voice: voice)
             case let .toolCallDelta(index, id, name, args):
@@ -623,6 +624,11 @@ final class AppModel: ObservableObject {
                 startEarly(index)
             case .finished:
                 break
+            case let .fellBack(to, reason):
+                answeredBy = to
+                let picked = Gemini.choices.first { $0.id == model }?.label ?? model
+                let title = "\(picked) failed (\(reason)), \(Gemini.choices.first { $0.id == to }?.label ?? to) answered"
+                if !steps.contains(where: { $0.title == title }) { addStep(title, done: true) }
             }
         }
         let ordered = calls.sorted(by: { $0.key < $1.key })
@@ -637,7 +643,7 @@ final class AppModel: ObservableObject {
             }
         }
         guard let first = ordered.first?.value, !first.name.isEmpty else { return }
-        Log.time("tool call \(first.name) \(first.args.prefix(160)) from \(model)\(hop > 0 ? " (step \(hop + 1))" : "")", since: t0)
+        Log.time("tool call \(first.name) \(first.args.prefix(160)) from \(answeredBy)\(hop > 0 ? " (step \(hop + 1))" : "")", since: t0)
         func toolCall(_ i: Int, _ c: (id: String, name: String, args: String)) -> ToolCall {
             let a = (try? JSONSerialization.jsonObject(with: Data(c.args.utf8)) as? [String: Any]) ?? [:]
             return ToolCall(id: c.id.isEmpty ? "call_\(i)" : c.id, name: c.name, arguments: a, rawArguments: c.args)

@@ -391,6 +391,8 @@ enum ChatEvent {
     case text(String)
     case toolCallDelta(index: Int, id: String?, name: String?, arguments: String?)
     case finished(String?)
+    /// The picked model failed before saying anything and `to` is answering instead; `reason` is short and key-free.
+    case fellBack(to: String, reason: String)
 }
 
 enum SarvamChat {
@@ -427,6 +429,15 @@ enum SarvamChat {
                     let hasImage = messages.contains { (($0["content"] as? [[String: Any]]) ?? []).contains { $0["image_url"] != nil } }
                     let (fbModel, fbVersion) = hasImage ? (Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4"), Version.v2) : ("sarvam-105b", Version.v1)
                     Log.error("\(model) failed (\((error as? APIError).map { "\($0.status): \($0.sanitizedMessage)" } ?? error.localizedDescription)); answering with \(fbModel)")
+                    let api = error as? APIError
+                    let reason: String
+                    switch api?.status {
+                    case 401?, 403?: reason = "key refused"
+                    case 402?: reason = "no credits"
+                    case let code?: reason = api?.isOutOfCredits == true ? "no credits" : "error \(code)"
+                    case nil: reason = "couldn't connect"
+                    }
+                    cont.yield(.fellBack(to: fbModel, reason: reason))
                     do {
                         for try await e in sarvamStream(model: fbModel, version: fbVersion, messages: messages, tools: tools, toolChoice: toolChoice,
                                                         reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json) {
