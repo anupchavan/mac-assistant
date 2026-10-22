@@ -94,9 +94,10 @@ enum Music: QuickyExtension {
         // iTunes' top pick goes up only if it's about what was asked (its search returns something for anything).
         let asked = Set(query.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 2 })
         func relevant(_ h: Hit) -> Bool { !asked.isDisjoint(with: Set("\(h.title) \(h.artists)".lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init))) }
-        if let top = itunesOnly.first, relevant(top) { out.append(top.line) }
+        var appleOnly = itunesOnly.filter(relevant)
+        if !appleOnly.isEmpty { out.append(appleOnly.removeFirst().line) }
         out += others.map(\.line)
-        out += itunesOnly.dropFirst(out.contains(itunesOnly.first?.line ?? "\u{0}") ? 1 : 0).filter(relevant).map(\.line)
+        out += appleOnly.map(\.line)
         out = Array(out.prefix(6))
         return out.isEmpty ? "No results for “\(query)”." : out.joined(separator: "\n")
     }
