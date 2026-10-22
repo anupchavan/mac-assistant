@@ -1,19 +1,26 @@
 import Foundation
 
-/// Web search for the web_search tool. Uses whichever provider has a key, fastest first:
-/// Parallel (PARALLEL_API_KEY, turbo ~200-350 ms), Exa (EXA_API_KEY), Brave (BRAVE_API_KEY).
+/// Web search for the web_search tool. Uses whichever provider has a key, most accurate first:
+/// Exa (EXA_API_KEY, its own semantic index, lite ~400 ms, ~98% on an independent factual-lookup test),
+/// Brave (BRAVE_API_KEY, independent index, ~600 ms), Parallel (PARALLEL_API_KEY, fast mode; turbo is fastest
+/// but scored ~71% on the same test, so it comes last).
 /// Keys come from the same places as the others (environment or ~/.zshrc).
 enum WebSearch {
     enum Provider: String { case parallel, exa, brave }
 
     static var provider: (Provider, String)? {
-        if let k = Keys.lookup(["PARALLEL_API_KEY"]) { return (.parallel, k) }
         if let k = Keys.lookup(["EXA_API_KEY"]) { return (.exa, k) }
         if let k = Keys.lookup(["BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY"]) { return (.brave, k) }
+        if let k = Keys.lookup(["PARALLEL_API_KEY"]) { return (.parallel, k) }
         return nil
     }
 
     static var available: Bool { provider != nil }
+
+    /// Content farms and affiliate/SEO sites that answer with marketing instead of facts.
+    static let junkDomains = ["medium.com", "quora.com", "pinterest.com", "geeksforgeeks.org",
+                              "analyticsinsight.net", "techjury.net", "demandsage.com", "exploding-topics.com",
+                              "explodingtopics.com", "g2.com", "capterra.com", "slashdot.org", "softwaresuggest.com"]
 
     struct Hit { let title: String; let url: String; let date: String?; let text: String }
 
@@ -46,17 +53,19 @@ enum WebSearch {
             req.httpMethod = "POST"
             req.setValue(key, forHTTPHeaderField: "x-api-key")
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let mode = Keys.setting("ASSISTANT_SEARCH_MODE", default: "turbo")
+            let mode = Keys.setting("ASSISTANT_SEARCH_MODE", default: "fast")   // turbo is faster but much less accurate
             req.httpBody = try JSONSerialization.data(withJSONObject: ["objective": objective, "search_queries": [query], "mode": mode])
         case .exa:
             req = URLRequest(url: URL(string: "https://api.exa.ai/search")!)
             req.httpMethod = "POST"
             req.setValue(key, forHTTPHeaderField: "x-api-key")
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            let type = Keys.setting("ASSISTANT_SEARCH_MODE", default: "fast")
+            // lite = Exa's low-latency tier (was instant/fast). ASSISTANT_SEARCH_MODE=auto trades ~0.8 s for depth.
+            let type = Keys.setting("ASSISTANT_SEARCH_MODE", default: "lite")
             req.httpBody = try JSONSerialization.data(withJSONObject: [
                 "query": query, "type": type, "numResults": 5,
-                "contents": ["highlights": ["numSentences": 3, "highlightsPerUrl": 2]],
+                "excludeDomains": junkDomains,
+                "contents": ["highlights": ["maxCharacters": 700, "query": objective]],
             ] as [String: Any])
         case .brave:
             var c = URLComponents(string: "https://api.search.brave.com/res/v1/web/search")!
