@@ -1,20 +1,22 @@
 import Foundation
 
-/// Wispr Flow-style fn gestures as a pure state machine (no AppKit). Times are milliseconds on a
-/// monotonic clock. The monitor feeds events and calls `tick` at `deadline`.
+/// Gestures on the trigger key (Settings › Shortcuts) as a pure state machine (no AppKit). Times are
+/// milliseconds on a monotonic clock. The monitor feeds events and calls `tick` at `deadline`.
 ///
-///   hold fn ≥ 200 ms            → holdBegan … holdEnded on release
+///   hold ≥ 200 ms               → holdBegan … holdEnded on release
 ///   tap, tap (≤ 400 ms apart)   → handsFree
 ///   tap while hands-free        → handsFreeStop
-///   fn + Space, shift + fn      → typed (shift held at fn-down never starts the mic)
+///   key + Space, ⇧ + key        → typed (⇧ held at key-down never starts the mic)
+///   ⌥ + key                     → newChat
 ///   three taps within 600 ms    → cancel
 ///   single tap                  → tap (the model decides: follow-up, stop speaking, or nothing)
-///   other key while fn is down  → discard (fn+arrows, fn+Delete, fn+F-keys never fire)
+///   other key while it is down  → discard (fn+arrows, Hyper+letter etc. never fire)
 struct FnGesture {
     enum Output: Equatable {
-        case preroll, holdBegan, holdEnded(heldMs: Double), handsFree, handsFreeStop, typed, tap, cancel, discard
-        case controlDoubleTap
+        case preroll, holdBegan, holdEnded(heldMs: Double), handsFree, handsFreeStop, typed, newChat, tap, cancel, discard
     }
+    /// A modifier held with the trigger key.
+    enum Extra { case shift, option }
 
     static let holdMs: Double = 200
     static let doubleTapMs: Double = 400
@@ -29,7 +31,7 @@ struct FnGesture {
         case secondDown(firstDown: Double)    // will become hands-free
         case handsFree(firstDown: Double)
         case handsFreeDown(firstDown: Double, at: Double)
-        case typedHeld                        // fn is down but already became .typed; its release does nothing
+        case typedHeld                        // key is down but already became .typed/.newChat; its release does nothing
     }
 
     private var state: State = .idle
@@ -42,11 +44,11 @@ struct FnGesture {
     /// Reset from outside, e.g. when the model ends hands-free listening by silence.
     mutating func reset() { state = .idle; deadline = nil }
 
-    mutating func fnDown(_ t: Double, shift: Bool = false) -> [Output] {
+    mutating func fnDown(_ t: Double, extra: Extra? = nil) -> [Output] {
         switch state {
-        case .idle where shift:
+        case .idle where extra != nil:
             state = .typedHeld; deadline = nil
-            return [.typed]
+            return [extra == .shift ? .typed : .newChat]
         case .idle:
             state = .down(at: t); deadline = t + Self.holdMs
             return [.preroll]
@@ -65,11 +67,11 @@ struct FnGesture {
         }
     }
 
-    /// Shift pressed while fn is down, before it became a hold: typed instead of voice.
-    mutating func shiftDown(_ t: Double) -> [Output] {
+    /// ⇧ or ⌥ pressed while the key is down, before it became a hold: typed or a new chat instead of voice.
+    mutating func extraDown(_ e: Extra, _ t: Double) -> [Output] {
         guard case .down = state else { return [] }
         state = .typedHeld; deadline = nil
-        return [.typed]
+        return [e == .shift ? .typed : .newChat]
     }
 
     mutating func fnUp(_ t: Double) -> [Output] {
@@ -126,30 +128,5 @@ struct FnGesture {
     private func deadlineStart() -> Double {
         if case let .down(at) = state { return at }
         return 0
-    }
-}
-
-/// Double-tap Control (either side): two clean presses within `gapMs`, each released within `maxPressMs`.
-/// Any other key, or another modifier held with Control, spoils it, so ⌃C, ⌃⌘Q etc. never fire.
-struct ControlDoubleTap {
-    static let maxPressMs: Double = 300
-    static let gapMs: Double = 400
-
-    private var downAt: Double?
-    private var lastTapUp: Double?
-    private var spoiled = false
-
-    mutating func down(_ t: Double) { downAt = t; spoiled = false }
-
-    /// Another key or modifier while Control is down, or between the taps.
-    mutating func spoil() { spoiled = true; lastTapUp = nil }
-
-    /// Returns true on the release that completes a double tap.
-    mutating func up(_ t: Double) -> Bool {
-        defer { downAt = nil }
-        guard let d = downAt, !spoiled, t - d <= Self.maxPressMs else { lastTapUp = nil; return false }
-        if let last = lastTapUp, d - last <= Self.gapMs { lastTapUp = nil; return true }
-        lastTapUp = t
-        return false
     }
 }

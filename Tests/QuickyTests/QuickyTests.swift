@@ -9,8 +9,8 @@ final class FnGestureTests: XCTestCase {
         for ev in timeline {
             switch ev {
             case let .down(t): out += m.tick(t) + m.fnDown(t)
-            case let .shiftDown(t): out += m.tick(t) + m.fnDown(t, shift: true)
-            case let .shift(t): out += m.tick(t) + m.shiftDown(t)
+            case let .shiftDown(t): out += m.tick(t) + m.fnDown(t, extra: .shift)
+            case let .shift(t): out += m.tick(t) + m.extraDown(.shift, t)
             case let .up(t): out += m.tick(t) + m.fnUp(t)
             case let .key(c, t): out += m.tick(t) + m.otherKeyDown(c, t)
             case let .wait(t): out += m.tick(t)
@@ -33,6 +33,54 @@ final class FnGestureTests: XCTestCase {
     func testDoubleTapSecondHeld() { XCTAssertEqual(decisions([.down(0), .up(100), .down(250), .wait(900), .up(1000)]), [.handsFree]) }
     func testHandsFreeStop() {
         XCTAssertEqual(decisions([.down(0), .up(100), .down(250), .up(330), .down(3000), .up(3080)]), [.handsFree, .handsFreeStop])
+    }
+}
+
+final class TriggerExtraTests: XCTestCase {
+    func testOptionAtDownIsNewChatAndNeverStartsTheMic() {
+        var m = FnGesture()
+        XCTAssertEqual(m.fnDown(0, extra: .option), [.newChat])
+        XCTAssertEqual(m.fnUp(120) + m.tick(900), [])
+    }
+    func testOptionDuringHoldWindow() {
+        var m = FnGesture()
+        XCTAssertEqual(m.fnDown(0), [.preroll])
+        XCTAssertEqual(m.extraDown(.option, 80), [.newChat])
+        XCTAssertEqual(m.fnUp(300) + m.tick(1000), [])
+    }
+}
+
+final class HyperDetectorTests: XCTestCase {
+    let cmd = CGEventFlags.maskCommand, ctrl = CGEventFlags.maskControl, opt = CGEventFlags.maskAlternate, shift = CGEventFlags.maskShift
+
+    /// Karabiner's Caps Lock: four modifiers within a few ms, then all released.
+    func testBurstIsHyper() {
+        var h = HyperDetector()
+        XCTAssertNil(h.flags([shift], at: 0))
+        XCTAssertNil(h.flags([shift, cmd], at: 1))
+        XCTAssertNil(h.flags([shift, cmd, ctrl], at: 1))
+        XCTAssertEqual(h.flags([shift, cmd, ctrl, opt], at: 2), .down(extra: nil))
+        XCTAssertEqual(h.flags([cmd, ctrl, opt], at: 300), .up)
+        XCTAssertNil(h.flags([], at: 301))
+    }
+    func testShiftHeldFirstIsShiftHyper() {
+        var h = HyperDetector()
+        _ = h.flags([shift], at: 0)
+        _ = h.flags([shift, cmd], at: 400); _ = h.flags([shift, cmd, ctrl], at: 401)
+        XCTAssertEqual(h.flags([shift, cmd, ctrl, opt], at: 402), .down(extra: .shift))
+        XCTAssertEqual(h.flags([shift], at: 600), .up)
+    }
+    func testOptionHeldFirstIsOptionHyper() {
+        var h = HyperDetector()
+        _ = h.flags([opt], at: 0)
+        _ = h.flags([opt, shift, cmd], at: 500)
+        XCTAssertEqual(h.flags([opt, shift, cmd, ctrl], at: 501), .down(extra: .option))
+    }
+    /// ⌘⌃⌥⇧ pressed one by one is a person, not a Hyperkey.
+    func testSlowChordIsNotHyper() {
+        var h = HyperDetector()
+        _ = h.flags([cmd], at: 0); _ = h.flags([cmd, ctrl], at: 150); _ = h.flags([cmd, ctrl, opt], at: 300)
+        XCTAssertNil(h.flags([cmd, ctrl, opt, shift], at: 450))
     }
 }
 
@@ -161,34 +209,6 @@ final class APIErrorTests: XCTestCase {
         XCTAssertLessThanOrEqual(e.sanitizedMessage.count, 80)
         let bad = APIError(status: 400, body: #"{"error":{"message":"Tool messages found but no tools provided.","code":"invalid_request_error"}}"#)
         XCTAssertEqual(bad.errorDescription, "Sarvam returned an error (400): Tool messages found but no tools provided.")
-    }
-}
-
-final class ControlDoubleTapTests: XCTestCase {
-    func testDoubleTapFires() {
-        var c = ControlDoubleTap()
-        c.down(0); XCTAssertFalse(c.up(90))
-        c.down(250); XCTAssertTrue(c.up(330))
-    }
-    func testTooSlowBetweenTaps() {
-        var c = ControlDoubleTap()
-        c.down(0); _ = c.up(90)
-        c.down(600); XCTAssertFalse(c.up(680))
-    }
-    func testHeldControlIsNotATap() {
-        var c = ControlDoubleTap()
-        c.down(0); XCTAssertFalse(c.up(500))
-        c.down(600); XCTAssertFalse(c.up(680))
-    }
-    func testShortcutSpoils() {
-        var c = ControlDoubleTap()
-        c.down(0); _ = c.up(90)
-        c.down(200); c.spoil(); XCTAssertFalse(c.up(260))     // ⌃C as the second press
-    }
-    func testThirdTapStartsOver() {
-        var c = ControlDoubleTap()
-        c.down(0); _ = c.up(80); c.down(160); XCTAssertTrue(c.up(240))
-        c.down(320); XCTAssertFalse(c.up(400))
     }
 }
 

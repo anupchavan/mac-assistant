@@ -40,7 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem.menu = menu
 
         requestPermissions()
+        model.hotkey.reloadTrigger()
         model.hotkey.start()
+        settings.onShortcutsChanged = { [weak self] in self?.model.hotkey.reloadTrigger() }
         // Rebuild the tap whenever Accessibility or Input Monitoring changes, so a grant works without
         // a relaunch (a tap made before the grant can stay listen-only or get no fn events).
         var granted = (AXIsProcessTrusted(), CGPreflightListenEventAccess())
@@ -60,6 +62,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Log.info(Keys.report().replacingOccurrences(of: "\n", with: " · "))
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        if model.hotkey.capsLockHyper { CapsLockHyper.apply(false) }   // give Caps Lock back
+    }
+
     private func requestPermissions() {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
@@ -68,66 +74,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         AVCaptureDevice.requestAccess(for: .audio) { _ in }
     }
 
-    // MARK: Menu (rebuilt each time it opens so permission states are current)
+    // MARK: Menu (rebuilt each time it opens so the trigger key is current)
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        func item(_ title: String, _ action: Selector?, key: String = "") -> NSMenuItem {
+        func item(_ title: String, _ action: Selector, key: String = "") -> NSMenuItem {
             let i = NSMenuItem(title: title, action: action, keyEquivalent: key)
             i.target = self
             return i
         }
-        menu.addItem(item("Ask (hold fn)", #selector(askTyped)))
-        menu.addItem(item("New Chat", #selector(newChat)))
+        let symbol = model.hotkey.trigger.symbol
+        menu.addItem(item("New Chat (⌥ \(symbol))", #selector(newChat)))
         menu.addItem(.separator())
-
-        let perms: [(String, Bool, String)] = [
-            ("Accessibility", AXIsProcessTrusted(), "Privacy_Accessibility"),
-            ("Input Monitoring", CGPreflightListenEventAccess(), "Privacy_ListenEvent"),
-            ("Screen Recording", CGPreflightScreenCaptureAccess(), "Privacy_ScreenCapture"),
-            ("Microphone", AVCaptureDevice.authorizationStatus(for: .audio) == .authorized, "Privacy_Microphone"),
-        ]
-        for (name, ok, pane) in perms {
-            let i = item("\(ok ? "✓" : "✗")  \(name)", ok ? nil : #selector(openPrivacy(_:)))
-            i.representedObject = pane
-            menu.addItem(i)
-        }
-        let keys = item(Keys.sarvam == nil ? "✗  Sarvam key (add it in Settings…)" : "✓  Sarvam key", Keys.sarvam == nil ? #selector(openSettings) : nil)
-        menu.addItem(keys)
-        menu.addItem(item(Keys.openAI == nil ? "✗  OpenAI key (computer use off)" : "✓  OpenAI key", nil))
         menu.addItem(item("Settings…", #selector(openSettings), key: ","))
-        menu.addItem(item("Reload Keys", #selector(reloadKeys)))
         menu.addItem(.separator())
-        let right = item("Use right ⌥ instead of fn", #selector(toggleRightOption))
-        right.state = model.hotkey.useRightOption ? .on : .off
-        menu.addItem(right)
-        let vision = item("Use screenshots with gemma4", #selector(toggleVision))
-        vision.state = (UserDefaults.standard.object(forKey: "visionAvailable") as? Bool ?? true) ? .on : .off
-        menu.addItem(vision)
-        menu.addItem(.separator())
-        menu.addItem(item("Quit", #selector(quit), key: "q"))
+        menu.addItem(item("Quit Quicky", #selector(quit), key: "q"))
     }
 
-    @objc private func askTyped() { model.showTyped() }
     @objc private func newChat() { model.newChat(); model.showTyped() }
     @objc private func openSettings() { settings.show() }
-    @objc private func reloadKeys() { Keys.reload(); Log.info(Keys.report().replacingOccurrences(of: "\n", with: " · ")) }
     @objc private func quit() { NSApp.terminate(nil) }
-
-    @objc private func toggleRightOption() {
-        model.hotkey.useRightOption.toggle()
-        UserDefaults.standard.set(model.hotkey.useRightOption, forKey: "useRightOption")
-    }
-
-    @objc private func toggleVision() {
-        let on = UserDefaults.standard.object(forKey: "visionAvailable") as? Bool ?? true
-        UserDefaults.standard.set(!on, forKey: "visionAvailable")
-        Log.info("vision \(!on ? "on" : "off")")
-    }
-
-    @objc private func openPrivacy(_ sender: NSMenuItem) {
-        guard let pane = sender.representedObject as? String,
-              let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(pane)") else { return }
-        NSWorkspace.shared.open(url)
-    }
 }
