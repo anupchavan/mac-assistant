@@ -272,8 +272,9 @@ final class AppModel: ObservableObject {
         stt = s
         partial = ""
         gate = SpeechGate()
+        let filter = SpeechFilter()
         mic.onChunk = { [weak self, weak s] chunk, level in
-            s?.send(chunk)
+            for c in filter.pass(chunk, level: level) { s?.send(c) }
             Task { @MainActor in self?.level(level) }
         }
         do { try mic.start() } catch { notice = "Microphone unavailable: \(error.localizedDescription)" }
@@ -1215,12 +1216,7 @@ final class AppModel: ObservableObject {
         }
         // Typing while listening switches to typed mode and stops the mic.
         if listening, !cmd, let chars = e.characters, !chars.isEmpty, chars.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }) {
-            let text = partial
-            discardPreroll()
-            hotkey.resetGesture()
-            input = .typed
-            draft = (text.isEmpty ? "" : text + " ") + chars
-            focusField = true
+            typeInstead(chars)
             return true
         }
         // Filter overlay lists by typing.
@@ -1231,6 +1227,16 @@ final class AppModel: ObservableObject {
             }
         }
         return false
+    }
+
+    /// Typing or clicking the bar while listening: stop the mic and keep what was heard as the draft.
+    func typeInstead(_ chars: String = "") {
+        let text = partial
+        discardPreroll()
+        hotkey.resetGesture()
+        input = .typed
+        draft = (text.isEmpty ? "" : text + " ") + chars
+        focusField = true
     }
 
     private func clampSelection() {

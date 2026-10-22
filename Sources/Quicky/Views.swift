@@ -253,7 +253,7 @@ struct BottomBar: View {
             .contentShape(Rectangle())
             .onTapGesture {
                 guard !m.busy else { return }
-                if m.listening { _ = m.escape() } else { m.input = .typed; m.focusField = true }
+                if m.listening { m.typeInstead() } else { m.input = .typed; m.focusField = true }
             }
     }
 
