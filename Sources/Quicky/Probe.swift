@@ -479,7 +479,7 @@ enum Probe {
                             for a in real {
                                 let x = (a["x"] as? NSNumber)?.doubleValue ?? -1, y = (a["y"] as? NSNumber)?.doubleValue ?? -1
                                 let p = ComputerUser.map(x, y, windowFrame: first.1, imageSize: CGSize(width: first.0.width, height: first.0.height))
-                                print("  round \(round) would do: \(a["type"] ?? "?") at image (\(Int(x)), \(Int(y))) → screen \(p.map { "(\(Int($0.x)), \(Int($0.y)))" } ?? "outside window"), target label: \(p.flatMap { ComputerUser.label(at: $0) } ?? "none")")
+                                print("  round \(round) would do: \(a["type"] ?? "?") at image (\(Int(x)), \(Int(y))) → screen \(p.map { "(\(Int($0.x)), \(Int($0.y)))" } ?? "outside window"), target label: \(p.flatMap { ComputerUser.label(at: $0, pid: ctx.pid) } ?? "none")")
                             }
                             break rounds
                         }

@@ -220,7 +220,7 @@ final class ComputerUser {
         switch type {
         case "click", "double_click":
             guard let p = point() else { return (false, "a click outside the window") }
-            let label = Self.label(at: p)
+            let label = Self.label(at: p, pid: targetPid)
             onStatus?("Clicking \(label ?? "")".trimmingCharacters(in: .whitespaces))
             await AgentCursor.shared.move(to: p, label: label.map { "Clicking \($0)" } ?? "Clicking")
             await MainActor.run { AgentCursor.shared.click() }
@@ -386,9 +386,8 @@ final class ComputerUser {
     }
 
     /// AX label of the element at a point, so the pill says "Clicking Block" instead of coordinates.
-    static func label(at p: CGPoint) -> String? {
-        var el: AXUIElement?
-        guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(p.x), Float(p.y), &el) == .success, let el else { return nil }
+    static func label(at p: CGPoint, pid: pid_t) -> String? {
+        guard let el = ContextCapture.element(at: p, pid: pid) else { return nil }
         let t: String? = ContextCapture.attr(el, kAXTitleAttribute) ?? ContextCapture.attr(el, kAXDescriptionAttribute) ?? (ContextCapture.attr(el, kAXValueAttribute) as String?)
         guard let t, !t.isEmpty else { return nil }
         return String(t.prefix(30))

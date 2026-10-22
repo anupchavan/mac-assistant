@@ -136,9 +136,7 @@ enum ContextCapture {
         }
         ctx.selection = selection ?? ""
         ctx.selectionUnreadable = selection == nil
-        let system = AXUIElementCreateSystemWide()
-        var el: AXUIElement?
-        if AXUIElementCopyElementAtPosition(system, Float(ctx.pointer.x), Float(ctx.pointer.y), &el) == .success, let el {
+        if let el = element(at: ctx.pointer, pid: ctx.pid) {
             AXUIElementSetMessagingTimeout(el, 0.1)
             let role: String = attr(el, kAXRoleAttribute) ?? ""
             let title: String = attr(el, kAXTitleAttribute) ?? attr(el, kAXDescriptionAttribute) ?? ""
@@ -147,6 +145,16 @@ enum ContextCapture {
                 .filter { !$0.isEmpty }.joined(separator: " ")
             ctx.pointerElementFrame = frame(of: el)
         }
+    }
+
+    /// The element of `pid` at a screen point. Never hit-test system-wide: when the point is over one of our
+    /// own windows, AppKit answers in-process on this background thread and deadlocks against the main thread.
+    static func element(at p: CGPoint, pid: pid_t) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.25)
+        var el: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(app, Float(p.x), Float(p.y), &el) == .success else { return nil }
+        return el
     }
 
     static func attr<T>(_ el: AXUIElement, _ name: String) -> T? {
