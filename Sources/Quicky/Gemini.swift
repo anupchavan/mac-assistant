@@ -9,7 +9,10 @@ enum Gemini {
         ("sarvam-105b", "Sarvam 105B"),
         ("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite"),
         ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+        ("openrouter/google/gemini-3.5-flash", "Gemini 3.5 Flash (OpenRouter)"),
     ]
+    /// Models that read the screenshot themselves (so screen asks skip gemma4).
+    static func seesImages(_ model: String) -> Bool { model.hasPrefix("gemini") || model.hasPrefix("openrouter/") }
     static var location: String { Keys.setting("GOOGLE_CLOUD_LOCATION", default: "asia-south1") }
     static var project: String? {
         let v = (UserDefaults.standard.string(forKey: "googleCloudProject") ?? Keys.lookup(["GOOGLE_CLOUD_PROJECT"]) ?? "")
@@ -23,7 +26,9 @@ enum Gemini {
     static var answerModel: String {
         let env = ProcessInfo.processInfo.environment["ASSISTANT_DEEP_MODEL"].flatMap { $0.isEmpty ? nil : $0 }
         let picked = env ?? UserDefaults.standard.string(forKey: "answerModel") ?? Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b")
-        return picked.hasPrefix("gemini") && !available ? "sarvam-105b" : picked
+        if picked.hasPrefix("gemini") && !available { return "sarvam-105b" }
+        if picked.hasPrefix("openrouter/") && Keys.openRouter == nil { return "sarvam-105b" }
+        return picked
     }
 
     static func stream(model: String, messages: [[String: Any]], tools: [[String: Any]]?, toolChoice: String,

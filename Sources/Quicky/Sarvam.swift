@@ -397,7 +397,8 @@ enum SarvamChat {
     static func stream(model: String, version: Version, messages: [[String: Any]], tools: [[String: Any]]? = nil,
                        toolChoice: String = "auto", reasoning: String? = nil, maxTokens: Int, temperature: Double? = nil,
                        json: Bool = false) -> AsyncThrowingStream<ChatEvent, Error> {
-        guard model.hasPrefix("gemini") else {
+        let viaOpenRouter = model.hasPrefix("openrouter/")
+        guard model.hasPrefix("gemini") || viaOpenRouter else {
             return sarvamStream(model: model, version: version, messages: messages, tools: tools, toolChoice: toolChoice,
                                 reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json)
         }
@@ -405,8 +406,12 @@ enum SarvamChat {
             let task = Task {
                 var said = false
                 do {
-                    for try await e in Gemini.stream(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
-                                                     reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json) {
+                    let events = viaOpenRouter
+                        ? sarvamStream(model: model, version: .v1, messages: messages, tools: tools, toolChoice: toolChoice,
+                                       reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json)
+                        : Gemini.stream(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
+                                        reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json)
+                    for try await e in events {
                         said = true
                         cont.yield(e)
                     }
@@ -436,16 +441,28 @@ enum SarvamChat {
         AsyncThrowingStream { cont in
             let task = Task {
                 do {
-                    let key = try Sarvam.key()
-                    var req = URLRequest(url: Sarvam.base.appendingPathComponent("\(version.rawValue)/chat/completions"))
+                    // Same OpenAI-style API for Sarvam and OpenRouter ("openrouter/<vendor>/<model>").
+                    let openRouter = model.hasPrefix("openrouter/")
+                    var req: URLRequest
+                    var body: [String: Any]
+                    if openRouter {
+                        guard let key = Keys.openRouter else { throw APIError(status: 401, body: "Add an OpenRouter key in Settings → API Keys.") }
+                        req = URLRequest(url: URL(string: "https://openrouter.ai/api/v1/chat/completions")!)
+                        req.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+                        body = ["model": String(model.dropFirst("openrouter/".count)), "messages": OpenRouter.restoreReasoning(messages),
+                                "stream": true, "max_tokens": maxTokens,
+                                "reasoning": ["effort": reasoning ?? "minimal"]]
+                    } else {
+                        req = URLRequest(url: Sarvam.base.appendingPathComponent("\(version.rawValue)/chat/completions"))
+                        req.setValue(try Sarvam.key(), forHTTPHeaderField: "api-subscription-key")
+                        body = ["model": model, "messages": messages, "stream": true, "max_tokens": maxTokens]
+                        // nil sends an explicit null, which turns thinking off; omitting the field leaves it on (even "low" thinks for ~1k tokens).
+                        body["reasoning_effort"] = reasoning ?? NSNull()
+                    }
                     req.httpMethod = "POST"
                     req.timeoutInterval = 60
                     req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                    req.setValue(key, forHTTPHeaderField: "api-subscription-key")
-                    var body: [String: Any] = ["model": model, "messages": messages, "stream": true, "max_tokens": maxTokens]
                     if let tools, !tools.isEmpty { body["tools"] = tools; body["tool_choice"] = toolChoice }
-                    // nil sends an explicit null, which turns thinking off; omitting the field leaves it on (even "low" thinks for ~1k tokens).
-                    body["reasoning_effort"] = reasoning ?? NSNull()
                     if let temperature { body["temperature"] = temperature }
                     if json { body["response_format"] = ["type": "json_object"] }
                     req.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -456,6 +473,8 @@ enum SarvamChat {
                         for try await line in bytes.lines { text += line; if text.count > 2000 { break } }
                         throw APIError(status: status, body: text)
                     }
+                    var details: [Any] = []       // OpenRouter: Gemini's reasoning blocks, needed again after a tool call
+                    var firstCall: (index: Int, id: String)?
                     for try await line in bytes.lines {
                         try Task.checkCancellation()
                         guard line.hasPrefix("data:") else { continue }
@@ -465,14 +484,19 @@ enum SarvamChat {
                               let obj = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
                               let choice = (obj["choices"] as? [[String: Any]])?.first else { continue }
                         let delta = choice["delta"] as? [String: Any] ?? [:]
+                        if let r = delta["reasoning_details"] as? [Any] { details += r }
                         if let r = (delta["reasoning"] ?? delta["reasoning_content"]) as? String, !r.isEmpty { cont.yield(.reasoning(r)) }
                         if let c = delta["content"] as? String, !c.isEmpty { cont.yield(.text(c)) }
                         for tc in (delta["tool_calls"] as? [[String: Any]]) ?? [] {
                             let fn = tc["function"] as? [String: Any]
+                            if firstCall == nil, let id = tc["id"] as? String { firstCall = (tc["index"] as? Int ?? 0, id) }
                             cont.yield(.toolCallDelta(index: tc["index"] as? Int ?? 0, id: tc["id"] as? String,
                                                       name: fn?["name"] as? String, arguments: fn?["arguments"] as? String))
                         }
                         if let f = choice["finish_reason"] as? String { cont.yield(.finished(f)) }
+                    }
+                    if let c = firstCall, !details.isEmpty, let tag = OpenRouter.tag(details) {
+                        cont.yield(.toolCallDelta(index: c.index, id: c.id + tag, name: nil, arguments: nil))
                     }
                     cont.finish()
                 } catch {
@@ -491,5 +515,32 @@ enum SarvamChat {
             if case let .text(t) = e { out += t }
         }
         return out
+    }
+}
+
+/// OpenRouter needs Gemini's reasoning_details sent back with the assistant's tool call on the next
+/// request. They ride in the first tool call's id after "|or:" (the only field that round-trips).
+enum OpenRouter {
+    static func tag(_ details: [Any]) -> String? {
+        (try? JSONSerialization.data(withJSONObject: details)).map { "|or:" + $0.base64EncodedString() }
+    }
+
+    static func restoreReasoning(_ messages: [[String: Any]]) -> [[String: Any]] {
+        func clean(_ id: String) -> String { id.components(separatedBy: "|or:").first ?? id }
+        return messages.map { m in
+            var m = m
+            if var calls = m["tool_calls"] as? [[String: Any]] {
+                for i in calls.indices {
+                    guard let id = calls[i]["id"] as? String, let r = id.range(of: "|or:") else { continue }
+                    if let d = Data(base64Encoded: String(id[r.upperBound...])), let details = try? JSONSerialization.jsonObject(with: d) {
+                        m["reasoning_details"] = details
+                    }
+                    calls[i]["id"] = clean(id)
+                }
+                m["tool_calls"] = calls
+            }
+            if let id = m["tool_call_id"] as? String { m["tool_call_id"] = clean(id) }
+            return m
+        }
     }
 }

@@ -86,6 +86,11 @@ struct GeneralSettings: View {
     }
 
     private var answerNote: String {
+        if answer.hasPrefix("openrouter/") {
+            return Keys.openRouter != nil
+                ? "Through OpenRouter, outside India, so slower. Also reads screenshots. Falls back to Sarvam if it fails."
+                : "Add an OpenRouter key in API Keys to use it. Sarvam until then."
+        }
         guard answer.hasPrefix("gemini") else { return "Sarvam, India servers. Screenshots go to gemma4." }
         return hasGemini
             ? "Vertex AI in Mumbai, thinking minimal. Also reads screenshots. Falls back to Sarvam if it fails."
@@ -113,6 +118,7 @@ struct KeysSettings: View {
                 KeyRow(title: "Deepgram", hint: "Optional: faster speech recognition", names: Keys.deepgramNames)
                 KeyRow(title: "Google Cloud", hint: "Optional: Gemini answers from Mumbai", names: Keys.vertexNames)
                 ProjectRow()
+                KeyRow(title: "OpenRouter", hint: "Optional: Gemini without Google Cloud (not from India)", names: Keys.openRouterNames)
             } footer: {
                 Text("Saved in your Keychain and used right away. An export in ~/.zshrc works too.")
                     .font(.callout).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)

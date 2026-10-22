@@ -485,7 +485,7 @@ final class AppModel: ObservableObject {
                 ["type": "text", "text": "ASK: \(ask)"],
             ] as [[String: Any]]
             // Gemini sees images itself, so when it answers it takes screenshot asks too.
-            model = deepModel.hasPrefix("gemini") ? deepModel : fastModel; version = .v2; reasoning = nil
+            model = Gemini.seesImages(deepModel) ? deepModel : fastModel; version = .v2; reasoning = nil
         } else {
             if let shot = ctx.screenshot, screenAsk {
                 if useVision, let url = ContextCapture.jpegDataURL(shot) {
