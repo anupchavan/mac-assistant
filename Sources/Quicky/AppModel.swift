@@ -487,7 +487,7 @@ final class AppModel: ObservableObject {
     private func answer(ask: String, ctx: ScreenContext, route: Route, language: String?, voice: Bool) async throws {
         let mode = voice ? "voice" : "typed"
         let fastModel = Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4")
-        let deepModel = Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b")
+        let deepModel = Gemini.answerModel
         // Only asks that point at the screen go to the vision model with the screenshot. A general question
         // ("when is Sarvam's 1T model launching?") goes to the main model, which answers from what it knows.
         let screenAsk = Router.looksAtScreen(ask)
@@ -510,7 +510,8 @@ final class AppModel: ObservableObject {
                 ["type": "image_url", "image_url": ["url": url]],
                 ["type": "text", "text": "ASK: \(ask)"],
             ] as [[String: Any]]
-            model = fastModel; version = .v2; reasoning = nil
+            // Gemini sees images itself, so when it answers it takes screenshot asks too.
+            model = deepModel.hasPrefix("gemini") ? deepModel : fastModel; version = .v2; reasoning = nil
         } else {
             if let shot = ctx.screenshot, screenAsk {
                 if useVision, let url = ContextCapture.jpegDataURL(shot) {

@@ -16,6 +16,7 @@ import SwiftUI
 ///   Quicky --probe reflex "close this tab"     (the no-model fast path: prints the tool call it would make, never runs it)
 ///   Quicky --probe handoff "block this user"   (computer-use instruction only; never clicks)
 ///   Quicky --probe render <dir>                (offscreen PNGs of the panel states; nothing appears on screen)
+///   Quicky --probe settings <dir>              (opens the real Settings window, screenshots each tab, prints sizes)
 ///   Quicky --probe gesture                     (replays fn timelines through the state machine)
 enum Probe {
     static func run(_ args: [String]) {
@@ -56,7 +57,7 @@ enum Probe {
             let q = rest.first ?? "Say hello in Hindi in five words."
             let t0 = Date()
             var first: Date?
-            for try await e in SarvamChat.stream(model: Keys.setting("ASSISTANT_DEEP_MODEL", default: "sarvam-105b"), version: .v1,
+            for try await e in SarvamChat.stream(model: Gemini.answerModel, version: .v1,
                                                  messages: [["role": "system", "content": Prompts.system], ["role": "user", "content": "OUTPUT_MODE: typed\n\nASK: \(q)"]],
                                                  reasoning: nil, maxTokens: 600) {
                 if case let .text(t) = e { if first == nil { first = Date() }; print(t, terminator: ""); fflush(stdout) }
@@ -100,6 +101,23 @@ enum Probe {
                 if case .text(let t) = e { print(t, terminator: "") }
             }
             print(String(format: "\n— follow-up OK, %.0f ms total", Date().timeIntervalSince(t0) * 1000))
+        case "settings":
+            let dir = rest.first ?? NSTemporaryDirectory()
+            let settings = await MainActor.run { () -> SettingsWindow in let s = SettingsWindow(); s.show(); return s }
+            for i in 0..<2 {
+                let (num, info) = await MainActor.run { () -> (Int, String) in
+                    let w = settings.window!
+                    (w.contentViewController as? NSTabViewController)?.selectedTabViewItemIndex = i
+                    return (w.windowNumber, "tab \(i): title \"\(w.title)\", frame \(Int(w.frame.width))×\(Int(w.frame.height))")
+                }
+                try await Task.sleep(nanoseconds: 600_000_000)
+                print(info)
+                let p = Process()
+                p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                p.arguments = ["-x", "-o", "-l\(num)", "\(dir)/settings-tab\(i).png"]
+                try p.run(); p.waitUntilExit()
+            }
+            await MainActor.run { settings.window?.close() }
         case "render":
             // Draws the real panel views with fixture state into windows that are never shown, and saves PNGs (2x).
             let dir = URL(fileURLWithPath: rest.first ?? NSTemporaryDirectory())
@@ -552,7 +570,8 @@ enum RenderProbe {
         print("wrapped card: content \(Int(wrapped.frame.width))×\(Int(wrapped.frame.height)) in window \(Int(ph))")
         m.filter = "chat"
         save(ActionsPopover(onHeight: { ph = $0 }).environmentObject(m), width: Grid.popoverWidth, name: "8-popover-search", dir: dir, height: { ph })
-        save(SettingsView {}, width: 440, name: "9-settings", dir: dir, height: { 0 })
+        save(GeneralSettings(), width: SettingsWindow.size.width, name: "9-settings-general", dir: dir, height: { SettingsWindow.size.height })
+        save(KeysSettings(), width: SettingsWindow.size.width, name: "9-settings-keys", dir: dir, height: { SettingsWindow.size.height })
         save(AgentCursor.preview(label: "Clicking Block @elonmusk"), width: 220, name: "10-agent-cursor", dir: dir, height: { 44 })
 
         // Height must follow content both ways: long thread → new empty chat → back (⌘[).
