@@ -76,7 +76,8 @@ struct GeneralSettings: View {
             Section("Speaking") {
                 Picker(selection: $voice) {
                     Text("Sarvam Bulbul v3").tag(TTS.Provider.sarvam.rawValue)
-                    Text("ElevenLabs v4 (Clara)").tag(TTS.Provider.elevenLabs.rawValue)
+                    Text("ElevenLabs v4 Turbo").tag(TTS.Provider.elevenLabsTurbo.rawValue)
+                    Text("ElevenLabs v4").tag(TTS.Provider.elevenLabs.rawValue)
                 } label: {
                     Text("Voice")
                     Text(voiceNote)
@@ -107,10 +108,11 @@ struct GeneralSettings: View {
     }
 
     private var voiceNote: String {
-        guard voice == TTS.Provider.elevenLabs.rawValue else { return "India servers, the quickest to start talking." }
-        return hasElevenLabsKey
-            ? "More expressive: Quicky can sigh or laugh. Takes a little longer to start."
-            : "Add an ElevenLabs key in API Keys to use it. Bulbul until then."
+        guard voice != TTS.Provider.sarvam.rawValue else { return "Sarvam, India servers. Hindi, Telugu and nine more Indian languages." }
+        guard hasElevenLabsKey else { return "Add an ElevenLabs key in API Keys to use it. Bulbul until then." }
+        return voice == TTS.Provider.elevenLabsTurbo.rawValue
+            ? "Clara, and she can sigh or laugh. Starts about as fast as Bulbul."
+            : "Clara at full quality, sighs and laughs included. Starts about half a second later."
     }
 
     private var sttNote: String {

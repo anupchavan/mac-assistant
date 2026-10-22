@@ -16,7 +16,10 @@ protocol TextToSpeech: AnyObject {
 extension SarvamTTS: TextToSpeech {}
 
 enum TTS {
-    enum Provider: String { case sarvam, elevenLabs }
+    enum Provider: String {
+        case sarvam, elevenLabs, elevenLabsTurbo
+        var isElevenLabs: Bool { self != .sarvam }
+    }
 
     /// Settings → Voice, else ASSISTANT_TTS_PROVIDER, else Bulbul. ElevenLabs without a key quietly means Bulbul.
     static var chosen: Provider {
@@ -24,7 +27,7 @@ enum TTS {
         return Provider(rawValue: Keys.setting("ASSISTANT_TTS_PROVIDER", default: "")) ?? .sarvam
     }
 
-    static var provider: Provider { chosen == .elevenLabs && Keys.elevenLabs == nil ? .sarvam : chosen }
+    static var provider: Provider { chosen.isElevenLabs && Keys.elevenLabs == nil ? .sarvam : chosen }
 
     /// Both play through the same 22.05 kHz player, so audio always plays at its own speed.
     static let sampleRate = 22050
@@ -32,7 +35,8 @@ enum TTS {
     static func make(language: String, _ p: Provider = provider) -> TextToSpeech {
         switch p {
         case .sarvam: return SarvamTTS(language: language, sampleRate: sampleRate)
-        case .elevenLabs: return ElevenLabsTTS(language: language)
+        case .elevenLabs: return ElevenLabsTTS(language: language, model: "eleven_v4")
+        case .elevenLabsTurbo: return ElevenLabsTTS(language: language, model: "eleven_v4_turbo")
         }
     }
 }
@@ -42,26 +46,28 @@ enum TTS {
 /// Eleven v4 streams only over the dialogue socket (the plain TTS socket refuses v3/v4).
 /// One registered voice; every sentence is an `inputs` line for it. v4 has no speed setting, so
 /// it always speaks at 1x. The server waits for ~40 characters and 8 words before it starts.
+/// Warm-socket first audio from Anup's Mac in India: v4 Turbo ~150 ms, v4 ~800 ms (Bulbul ~230 ms).
 final class ElevenLabsTTS: NSObject, TextToSpeech, URLSessionWebSocketDelegate {
-    static var model: String { Keys.setting("ELEVENLABS_MODEL", default: "eleven_v4") }
-    /// "Clara V" from the Voice Library.
-    static var voice: String { Keys.setting("ELEVENLABS_VOICE_ID", default: "CLARA_V_VOICE_ID") }
+    /// "Clara V - Warm & Articulate" (British) from the Voice Library.
+    static var voice: String { Keys.setting("ELEVENLABS_VOICE_ID", default: "0ggs85h7hrWz8ExXnsBc") }
 
     var onAudio: ((Data) -> Void)?
     var onFinal: (() -> Void)?
     var onError: ((String) -> Void)?
     let language: String
+    let model: String
     private var task: URLSessionWebSocketTask?
     private var session: URLSession?
     private var keepAlive: Timer?
     private var oddByte: Data?      // a sample split across two chunks
+    private var finished = false    // the server closes the socket after is_final; that isn't an error
 
-    init(language: String) { self.language = language }
+    init(language: String, model: String) { self.language = language; self.model = model }
 
     func connect() throws {
         guard let key = Keys.elevenLabs else { throw MissingKey.elevenLabs }
         var c = URLComponents(string: "wss://api.elevenlabs.io/v1/text-to-dialogue/stream-input")!
-        c.queryItems = [.init(name: "model_id", value: Self.model), .init(name: "output_format", value: "pcm_\(TTS.sampleRate)")]
+        c.queryItems = [.init(name: "model_id", value: model), .init(name: "output_format", value: "pcm_\(TTS.sampleRate)")]
         var req = URLRequest(url: c.url!)
         req.setValue(key, forHTTPHeaderField: "xi-api-key")
         let s = URLSession(configuration: .default, delegate: self, delegateQueue: nil)
@@ -76,12 +82,23 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, URLSessionWebSocketDelegate {
         keepAlive = t
     }
 
+    /// v4 refuses an input that ends on a tag ("…to bed. [chuckles]"): a tag directs the words after it.
+    /// A trailing tag moves to the next sentence, and is dropped if none comes.
+    private var heldTags = ""
+
     func speak(_ text: String) {
-        send(["inputs": [["text": text + " ", "voice_id": Self.voice]]])
+        var t = heldTags + text
+        heldTags = ""
+        if let r = t.range(of: #"(\s*\[[a-z ]+\])+\s*$"#, options: .regularExpression) {
+            heldTags = t[r].trimmingCharacters(in: .whitespaces) + " "
+            t.removeSubrange(r)
+        }
+        guard t.range(of: #"\p{L}"#, options: .regularExpression) != nil else { return }
+        send(["inputs": [["text": t + " ", "voice_id": Self.voice]]])
     }
 
     /// End of the utterance: close_socket generates what's buffered and ends with `is_final`.
-    func flush() { send(["close_socket": true]) }
+    func flush() { heldTags = ""; send(["close_socket": true]) }
 
     func close() {
         keepAlive?.invalidate(); keepAlive = nil
@@ -102,10 +119,10 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, URLSessionWebSocketDelegate {
             guard let self else { return }
             switch result {
             case .failure(let err):
-                if self.task != nil { DispatchQueue.main.async { self.onError?(err.localizedDescription) } }
+                if self.task != nil, !self.finished { DispatchQueue.main.async { self.onError?(err.localizedDescription) } }
             case .success(let msg):
                 if case let .string(s) = msg { self.handle(s) }
-                if self.task != nil { self.receive() }
+                if self.task != nil, !self.finished { self.receive() }
             }
         }
     }
@@ -117,7 +134,10 @@ final class ElevenLabsTTS: NSObject, TextToSpeech, URLSessionWebSocketDelegate {
             if pcm.count % 2 == 1 { oddByte = pcm.suffix(1); pcm.removeLast() }
             onAudio?(pcm)
         }
-        if obj["is_final"] as? Bool == true { DispatchQueue.main.async { self.onFinal?() } }
+        if obj["is_final"] as? Bool == true {
+            finished = true
+            DispatchQueue.main.async { self.keepAlive?.invalidate(); self.onFinal?() }
+        }
         if let m = obj["message"] as? String, obj["error"] != nil {
             let safe = APIError(status: obj["code"] as? Int ?? 0, body: m, provider: .elevenLabs).sanitizedMessage
             Log.error("elevenlabs error: \(obj["error"] ?? "") \(safe)")

@@ -507,7 +507,7 @@ final class AppModel: ObservableObject {
 
     private func answer(ask: String, ctx: ScreenContext, route: Route, language: String?, voice: Bool) async throws {
         // Eleven v4 can act out audio tags; only then does the model hear it may use them.
-        let expressive = voice && TTS.provider == .elevenLabs
+        let expressive = voice && TTS.provider.isElevenLabs
         tags = AudioTags(speakTags: expressive)
         let mode = expressive ? "voice+tags" : voice ? "voice" : "typed"
         let fastModel = Keys.setting("ASSISTANT_VISION_MODEL", default: "gemma4")
