@@ -1000,6 +1000,9 @@ final class AppModel: ObservableObject {
         // Gemini answers on Vertex in Mumbai; a cold TLS connection there cost 0.3-3 s on the first answer.
         if Gemini.available, [Gemini.answerModel, Gemini.actionModel].contains(where: { $0.hasPrefix("gemini") }),
            let vertex = URL(string: "https://\(Gemini.location)-aiplatform.googleapis.com/") { hosts.append(vertex) }
+        // Models Mumbai doesn't serve (3.8 Flash so far) answer from the global endpoint.
+        if [Gemini.answerModel, Gemini.actionModel].contains(where: { $0.hasPrefix("gemini") && Gemini.locations(for: $0) != [Gemini.location] }),
+           let global = URL(string: "https://aiplatform.googleapis.com/") { hosts.append(global) }
         if [Gemini.answerModel, Gemini.actionModel].contains(where: { $0.hasPrefix("aistudio/") }),
            let studio = URL(string: "https://generativelanguage.googleapis.com/") { hosts.append(studio) }
         if [Gemini.answerModel, Gemini.actionModel].contains(where: Anthropic.isClaude) { hosts.append(Anthropic.host) }
