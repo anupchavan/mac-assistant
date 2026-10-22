@@ -15,6 +15,8 @@ enum Keys {
     static var deepgram: String? { lookup(deepgramNames) }
     static let vertexNames = ["VERTEX_API_KEY", "GOOGLE_CLOUD_API_KEY"]
     static var vertex: String? { lookup(vertexNames) }
+    static let aiStudioNames = ["GEMINI_API_KEY", "GOOGLE_API_KEY"]
+    static var aiStudio: String? { lookup(aiStudioNames) }
     static let elevenLabsNames = ["ELEVENLABS_API_KEY", "ELEVEN_API_KEY", "XI_API_KEY"]
     static var elevenLabs: String? { lookup(elevenLabsNames) }
 
@@ -26,7 +28,7 @@ enum Keys {
     static func source(_ names: [String]) -> Source? { find(names)?.source }
 
     private static func find(_ names: [String]) -> (value: String, source: Source)? {
-        if [sarvamNames, openAINames, deepgramNames, vertexNames, elevenLabsNames].contains(names), let v = Keychain.get(names[0]), !v.isEmpty { return (v, .settings) }
+        if [sarvamNames, openAINames, deepgramNames, vertexNames, aiStudioNames, elevenLabsNames].contains(names), let v = Keychain.get(names[0]), !v.isEmpty { return (v, .settings) }
         let env = ProcessInfo.processInfo.environment
         for n in names { if let v = env[n], !v.isEmpty { return (v, .environment) } }
         let file = shellExports()

@@ -402,7 +402,7 @@ enum SarvamChat {
     static func stream(model: String, version: Version, messages: [[String: Any]], tools: [[String: Any]]? = nil,
                        toolChoice: String = "auto", reasoning: String? = nil, maxTokens: Int, temperature: Double? = nil,
                        json: Bool = false) -> AsyncThrowingStream<ChatEvent, Error> {
-        guard model.hasPrefix("gemini") else {
+        guard Gemini.isGemini(model) else {
             return sarvamStream(model: model, version: version, messages: messages, tools: tools, toolChoice: toolChoice,
                                 reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json)
         }
