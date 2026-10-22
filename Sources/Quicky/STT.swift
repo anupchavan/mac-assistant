@@ -54,7 +54,8 @@ final class DeepgramSTT: NSObject, SpeechToText, URLSessionWebSocketDelegate {
     private var failed = false
     private var finalizing = false
     private var done = false
-    private var outbox: [Data] = []
+    /// Nova-3 clips a first word that starts at t=0 ("Can you…" → "You…"); a short lead-in of silence keeps it.
+    private var outbox: [Data] = [Data(count: 8000)]   // 250 ms of 16 kHz mono PCM
     private var finalWaiters: [CheckedContinuation<(String, String?), Never>] = []
     private let queue = DispatchQueue(label: "stt.deepgram")
     /// When Deepgram fails mid-turn, a Sarvam socket takes over with everything recorded so far,
