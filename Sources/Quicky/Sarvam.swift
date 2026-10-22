@@ -308,7 +308,7 @@ final class SarvamTTS: NSObject, URLSessionWebSocketDelegate {
 
     func connect() throws {
         let key = try Sarvam.key()
-        let model = Keys.setting("ASSISTANT_TTS_MODEL", default: "bulbul:v3")
+        let model = Keys.setting("ASSISTANT_TTS_MODEL", default: "bulbul:v4-flash")
         var c = URLComponents(string: "wss://api.sarvam.ai/text-to-speech/ws")!
         c.queryItems = [.init(name: "model", value: model), .init(name: "send_completion_event", value: "true")]
         var req = URLRequest(url: c.url!)
@@ -319,7 +319,7 @@ final class SarvamTTS: NSObject, URLSessionWebSocketDelegate {
         task?.resume()
         send(["type": "config", "data": [
             "language_code": language,
-            "speaker": Keys.setting("ASSISTANT_TTS_SPEAKER", default: "shubh"),
+            "speaker": Keys.setting("ASSISTANT_TTS_SPEAKER", default: "sarika_hi_conversation"),   // v4 speakers differ from v3's
             "pace": SarvamTTS.pace,
             "speech_sample_rate": sampleRate,
             "output_audio_codec": "linear16",

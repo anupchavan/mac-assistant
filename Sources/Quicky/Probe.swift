@@ -215,8 +215,8 @@ enum Probe {
             req.httpMethod = "POST"
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
             req.setValue(try Sarvam.key(), forHTTPHeaderField: "api-subscription-key")
-            req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text, "target_language_code": "en-IN", "model": "bulbul:v3",
-                                                                       "speaker": "shubh", "speech_sample_rate": 16000])
+            req.httpBody = try JSONSerialization.data(withJSONObject: ["text": text, "target_language_code": "en-IN", "model": "bulbul:v4-flash",
+                                                                       "speaker": "sarika_hi_conversation", "speech_sample_rate": 16000])
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard (resp as? HTTPURLResponse)?.statusCode == 200,
                   let b64 = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])?["audios"] as? [String], let first = b64.first,
