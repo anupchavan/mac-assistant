@@ -8,7 +8,7 @@ import SwiftUI
 ///   Quicky --probe agent "open google.com" [v1] (agent route request; v1 = sarvam-105b instead of gemma4)
 ///   Quicky --probe vision                      (front window → gemma4 on /v2; tells you if V2 is whitelisted)
 ///   Quicky --probe context                     (prints the context block for the front app)
-///   Quicky --probe tts "namaste" [hi-IN]       (Bulbul socket, plays it, prints first-audio latency)
+///   Quicky --probe tts "namaste" [hi-IN] [sarvam|elevenLabs] [rounds] (warm socket, plays round 1, first-audio latency)
 ///   Quicky --probe stt [seconds] [sarvam|deepgram] (records from the mic, realtime STT, prints the transcript)
 ///   Quicky --probe stt-ws "text" [rounds] [-v] (same TTS audio through Sarvam and Deepgram; final-transcript latency)
 ///   Quicky --probe route "block this user"
@@ -524,26 +524,36 @@ enum Probe {
             print(ctx.block(language: nil, outputMode: "typed", includeOCR: false))
             print("screenshot: \(ctx.screenshot.map { "\($0.width)x\($0.height)" } ?? "none"), \(Int(ctx.captureMs)) ms")
         case "tts":
+            // Time to first audio on a socket that's already open, like the app's warm socket. One round plays; more stay silent.
             let text = rest.first ?? "Namaste! Main aapki screen dekh sakta hoon."
-            let lang = rest.dropFirst().first ?? "hi-IN"
-            let player = PCMPlayer(sampleRate: 22050)
-            let tts = SarvamTTS(language: lang)
-            let t0 = Date()
-            var first = true
-            let finished = DispatchSemaphore(value: 0)
-            tts.onAudio = { pcm in
-                if first { first = false; print(String(format: "first audio %.0f ms", Date().timeIntervalSince(t0) * 1000)) }
-                player.enqueue(int16: pcm)
+            let lang = rest.count > 1 ? rest[1] : "hi-IN"
+            let provider = rest.count > 2 ? TTS.Provider(rawValue: rest[2]) ?? TTS.provider : TTS.provider
+            let rounds = rest.count > 3 ? Int(rest[3]) ?? 1 : 1
+            var firsts: [Double] = []
+            for round in 0..<rounds {
+                let player = PCMPlayer(sampleRate: Double(TTS.sampleRate))
+                let tts = TTS.make(language: lang, provider)
+                var t0 = Date()
+                var first: Double?
+                let finished = DispatchSemaphore(value: 0)
+                tts.onAudio = { pcm in
+                    if first == nil { first = Date().timeIntervalSince(t0) * 1000 }
+                    if rounds == 1 { player.enqueue(int16: pcm) }
+                }
+                tts.onFinal = { finished.signal() }
+                tts.onError = { m in print("tts error: \(m)"); finished.signal() }
+                try tts.connect()
+                try await Task.sleep(nanoseconds: 1_500_000_000)
+                t0 = Date()
+                tts.speak(text)
+                tts.flush()
+                _ = await withCheckedContinuation { c in DispatchQueue.global().async { c.resume(returning: finished.wait(timeout: .now() + 20)) } }
+                if rounds == 1 { try await Task.sleep(nanoseconds: UInt64(max(0, player.scheduledSeconds - player.playedSeconds + 0.3) * 1e9)) }
+                print(String(format: "\(provider.rawValue) round \(round + 1): first audio %.0f ms", first ?? -1))
+                if let first { firsts.append(first) }
+                tts.close()
             }
-            tts.onFinal = { finished.signal() }
-            tts.onError = { m in print("tts error: \(m)"); finished.signal() }
-            try tts.connect()
-            tts.speak(text)
-            tts.flush()
-            _ = await withCheckedContinuation { c in DispatchQueue.global().async { c.resume(returning: finished.wait(timeout: .now() + 20)) } }
-            try await Task.sleep(nanoseconds: UInt64((player.scheduledSeconds - player.playedSeconds + 0.3) * 1e9))
-            print(String(format: "audio %.1fs", player.scheduledSeconds))
-            tts.close()
+            if firsts.count > 1 { print(String(format: "median first audio %.0f ms", firsts.sorted()[firsts.count / 2])) }
         case "stt":
             let secs = Double(rest.first ?? "4") ?? 4
             let mic = Microphone()

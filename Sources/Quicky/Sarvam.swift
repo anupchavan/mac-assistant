@@ -1,7 +1,7 @@
 import Foundation
 
 struct APIError: LocalizedError {
-    enum Provider { case sarvam, openAI }
+    enum Provider { case sarvam, openAI, elevenLabs }
     let status: Int
     let body: String
     var provider: Provider = .sarvam
@@ -20,9 +20,13 @@ struct APIError: LocalizedError {
         case (.openAI, 402), (.openAI, 429): return "OpenAI rate limit or no credits."
         case (.sarvam, 401), (.sarvam, 403): return "Your Sarvam key was refused. Paste a working one in Settings (⌘, from the menu-bar ?)."
         case (.sarvam, _) where isOutOfCredits: return "Sarvam rate limit or no credits. Add credits and press ↵ to retry."
-        case (_, 500...): return "\(provider == .openAI ? "OpenAI" : "Sarvam") is having trouble (\(status)). Press ↵ to retry."
-        default: return "\(provider == .openAI ? "OpenAI" : "Sarvam") returned an error (\(status))\(detail)"
+        case (_, 500...): return "\(name) is having trouble (\(status)). Press ↵ to retry."
+        default: return "\(name) returned an error (\(status))\(detail)"
         }
+    }
+
+    private var name: String {
+        switch provider { case .sarvam: return "Sarvam"; case .openAI: return "OpenAI"; case .elevenLabs: return "ElevenLabs" }
     }
 
     /// The server's message, short and with anything key-like removed. Safe for the panel and the log.
@@ -45,11 +49,12 @@ struct APIError: LocalizedError {
 }
 
 enum MissingKey: LocalizedError {
-    case sarvam, openAI
+    case sarvam, openAI, elevenLabs
     var errorDescription: String? {
         switch self {
         case .sarvam: return "No Sarvam key found. Add export SARVAM_API_KEY=… to ~/.zshrc."
         case .openAI: return "No OpenAI key found. Add export OPENAI_API_KEY=… to ~/.zshrc."
+        case .elevenLabs: return "No ElevenLabs key found. Add export ELEVENLABS_API_KEY=… to ~/.zshrc."
         }
     }
 }

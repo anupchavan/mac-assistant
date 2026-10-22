@@ -401,3 +401,37 @@ final class ToolSchemaTests: XCTestCase {
         XCTAssertNil(problem("copy_to_clipboard", #"{"text":"x"}"#))
     }
 }
+
+final class AudioTagsTests: XCTestCase {
+    func run(_ chunks: [String], speak: Bool) -> (String, String) {
+        var f = AudioTags(speakTags: speak)
+        var shown = "", spoken = ""
+        for c in chunks { let r = f.feed(c); shown += r.shown; spoken += r.spoken }
+        let r = f.feed("", end: true); shown += r.shown; spoken += r.spoken
+        return (shown, AppModel.cleanForSpeech(spoken))   // the app cleans whitespace before speaking
+    }
+
+    func testTagSplitAcrossChunksIsSpokenNotShown() {
+        let (shown, spoken) = run(["[si", "ghs] Fine. Four thousand words", " to say go to bed. [chuckles]"], speak: true)
+        XCTAssertEqual(shown, "Fine. Four thousand words to say go to bed. ")
+        XCTAssertEqual(spoken, "[sighs] Fine. Four thousand words to say go to bed. [chuckles]")
+    }
+
+    func testUnknownTagsAndExtraTagsAreDropped() {
+        let (shown, spoken) = run(["[screams] No. [laughs] [sighs] [laughs] ok"], speak: true)
+        XCTAssertEqual(shown, "No. ok")
+        XCTAssertEqual(spoken, "No. [laughs] [sighs] ok")
+    }
+
+    func testBulbulNeverHearsTags() {
+        XCTAssertEqual(run(["[sighs] Done."], speak: false).1, "Done.")
+    }
+
+    func testUnclosedBracketIsText() {
+        XCTAssertEqual(run(["Option [a", " is fine"], speak: true).0, "Option [a is fine")
+    }
+
+    func testCleanForSpeechKeepsTagsOnly() {
+        XCTAssertEqual(AppModel.cleanForSpeech("[sighs] Fine [link"), "[sighs] Fine link")
+    }
+}
