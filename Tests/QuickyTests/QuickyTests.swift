@@ -552,3 +552,15 @@ final class AnthropicBodyTests: XCTestCase {
         XCTAssertNil(b["temperature"])
     }
 }
+
+final class DeepSeekBodyTests: XCTestCase {
+    func testThinkingOffForTalkOnForDeep() {
+        let msgs: [[String: Any]] = [["role": "user", "content": "hi"]]
+        let talk = DeepSeek.body(model: "deepseek-flash", messages: msgs, tools: nil, toolChoice: "auto", reasoning: nil, maxTokens: 900)
+        XCTAssertEqual((talk["thinking"] as? [String: Any])?["type"] as? String, "disabled")
+        XCTAssertNil(talk["reasoning_effort"])
+        let deep = DeepSeek.body(model: "deepseek-flash", messages: msgs, tools: nil, toolChoice: "auto", reasoning: "high", maxTokens: 4000)
+        XCTAssertEqual((deep["thinking"] as? [String: Any])?["type"] as? String, "enabled")
+        XCTAssertEqual(deep["reasoning_effort"] as? String, "high")
+    }
+}

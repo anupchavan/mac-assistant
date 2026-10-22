@@ -534,7 +534,7 @@ final class AppModel: ObservableObject {
                 ["type": "text", "text": "ASK: \(ask)"],
             ] as [[String: Any]]
             // Gemini and Claude see images themselves, so when they answer they take screenshot asks too.
-            model = Gemini.isOptional(deepModel) ? deepModel : fastModel; version = .v2; reasoning = nil
+            model = Gemini.seesImages(deepModel) ? deepModel : fastModel; version = .v2; reasoning = nil
         } else {
             if let shot = ctx.screenshot, screenAsk {
                 if useVision, let url = ContextCapture.jpegDataURL(shot) {
@@ -1003,6 +1003,7 @@ final class AppModel: ObservableObject {
         if [Gemini.answerModel, Gemini.actionModel].contains(where: { $0.hasPrefix("aistudio/") }),
            let studio = URL(string: "https://generativelanguage.googleapis.com/") { hosts.append(studio) }
         if [Gemini.answerModel, Gemini.actionModel].contains(where: Anthropic.isClaude) { hosts.append(Anthropic.host) }
+        if [Gemini.answerModel, Gemini.actionModel].contains(where: DeepSeek.isDeepSeek) { hosts.append(DeepSeek.host) }
         for url in hosts {
             var req = URLRequest(url: url)
             req.httpMethod = "HEAD"

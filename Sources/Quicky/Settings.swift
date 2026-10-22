@@ -53,6 +53,7 @@ struct GeneralSettings: View {
     @State private var answer = UserDefaults.standard.string(forKey: "answerModel") ?? "sarvam-105b"
     @State private var hasGemini = Gemini.available
     @State private var hasClaude = Anthropic.available
+    @State private var hasDeepSeek = DeepSeek.available
     @State private var claudeThinking = Anthropic.thinking
 
     var body: some View {
@@ -114,10 +115,15 @@ struct GeneralSettings: View {
             PermissionsSection()
         }
         .formStyle(.grouped)
-        .onAppear { hasDeepgramKey = Keys.deepgram != nil; hasGemini = Gemini.available; hasClaude = Anthropic.available; hasElevenLabsKey = Keys.elevenLabs != nil }
+        .onAppear { hasDeepgramKey = Keys.deepgram != nil; hasGemini = Gemini.available; hasClaude = Anthropic.available; hasDeepSeek = DeepSeek.available; hasElevenLabsKey = Keys.elevenLabs != nil }
     }
 
     private var answerNote: String {
+        if DeepSeek.isDeepSeek(answer) {
+            return hasDeepSeek
+                ? "DeepSeek API, served from China. Thinking off for talk. Screenshots go to gemma4. Falls back to Sarvam if it fails."
+                : "Add a DeepSeek key in API Keys to use it. Sarvam until then."
+        }
         if Anthropic.isClaude(answer) {
             return hasClaude
                 ? "Anthropic API, served outside India. Also reads screenshots and presses controls. Falls back to Sarvam if it fails."
@@ -288,6 +294,7 @@ struct KeysSettings: View {
                 KeyRow(title: "Google Cloud", hint: "Optional: Gemini answers from Mumbai", names: Keys.vertexNames)
                 KeyRow(title: "Gemini API", hint: "Optional: Gemini 3.8 Flash from AI Studio", names: Keys.aiStudioNames)
                 KeyRow(title: "Anthropic", hint: "Optional: Claude Haiku 5.5 answers", names: Anthropic.keyNames)
+                KeyRow(title: "DeepSeek", hint: "Optional: DeepSeek V4.1 Flash answers", names: DeepSeek.keyNames)
                 ProjectRow()
                 KeyRow(title: "ElevenLabs", hint: "Optional: the expressive Eleven v4 voice", names: Keys.elevenLabsNames)
             } footer: {
