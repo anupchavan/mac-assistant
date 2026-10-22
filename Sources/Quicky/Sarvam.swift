@@ -399,7 +399,7 @@ enum SarvamChat {
     enum Version: String { case v1, v2 }
 
     /// `toolChoice` "none" is for the reply after a tool result: /v1 rejects tool messages unless tools are sent too.
-    /// A "gemini-…" model goes to Vertex in Mumbai, a "claude-…" model to the Anthropic API. If either fails
+    /// A "gemini-…" model goes to Vertex in Mumbai, a "claude-…" model to the Anthropic API, a "deepseek-…" model to DeepSeek. If either fails
     /// before saying anything (bad key, quota, outage), the same request goes to sarvam-105b so a turn never
     /// dies on the optional model.
     static func stream(model: String, version: Version, messages: [[String: Any]], tools: [[String: Any]]? = nil,
@@ -416,6 +416,9 @@ enum SarvamChat {
                     let primary = Anthropic.isClaude(model)
                         ? Anthropic.stream(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
                                            reasoning: reasoning, maxTokens: maxTokens)
+                        : DeepSeek.isDeepSeek(model)
+                        ? DeepSeek.stream(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
+                                          reasoning: reasoning, maxTokens: maxTokens)
                         : Gemini.stream(model: model, messages: messages, tools: tools, toolChoice: toolChoice,
                                         reasoning: reasoning, maxTokens: maxTokens, temperature: temperature, json: json)
                     for try await e in primary {
