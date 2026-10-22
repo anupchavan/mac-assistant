@@ -286,3 +286,15 @@ final class ControlTests: XCTestCase {
         XCTAssertEqual(c.line, "7 | switch | Dark mode (off)")
     }
 }
+
+final class TemporalityTests: XCTestCase {
+    func testAgo() {
+        let now = Date()
+        XCTAssertEqual(AppModel.ago(now.addingTimeInterval(-4), now: now), "4 s ago")
+        XCTAssertEqual(AppModel.ago(now.addingTimeInterval(-600), now: now), "10 min ago")
+        XCTAssertEqual(AppModel.ago(now.addingTimeInterval(-7200), now: now), "2 h ago")
+    }
+    func testPressedLabel() {
+        XCTAssertEqual(Controls.label(from: "pressed button “Follow”"), "Follow")
+    }
+}

@@ -451,11 +451,21 @@ final class AppModel: ObservableObject {
 
     // MARK: - Answering
 
+    nonisolated static func ago(_ d: Date, now: Date = Date()) -> String {
+        let s = Int(now.timeIntervalSince(d))
+        if s < 90 { return "\(max(s, 1)) s ago" }
+        if s < 5400 { return "\(s / 60) min ago" }
+        return "\(s / 3600) h ago"
+    }
+
     private func historyMessages() -> [[String: Any]] {
         let previous = chats[chatIndex].turns.dropLast().suffix(6)
         var out: [[String: Any]] = []
         for t in previous where !t.answer.isEmpty {
-            out.append(["role": "user", "content": t.contextNote.map { "\(t.ask)\n\n(\($0))" } ?? t.ask])
+            // When and where each earlier ask happened, so "search for X" four seconds after "open YouTube"
+            // reads as a follow-up on that screen, not a fresh question.
+            let when = "[\(Self.ago(t.at)) in \(t.appLabel.isEmpty ? "another app" : t.appLabel)]"
+            out.append(["role": "user", "content": "\(when) \(t.ask)" + (t.contextNote.map { "\n\n(\($0))" } ?? "")])
             out.append(["role": "assistant", "content": t.rememberedAnswer])
         }
         return out
@@ -703,7 +713,7 @@ final class AppModel: ObservableObject {
     /// Tools that may start before the model finishes: no confirm, nothing to undo, nothing that needs the panel.
     nonisolated static func runsEarly(_ call: ToolCall) -> Bool {
         guard !call.needsConfirm else { return false }
-        return ["web_search", "open_url", "open_app", "press_shortcut", "press", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
+        return ["web_search", "open_url", "open_app", "press_shortcut", "press", "type_text", "copy_to_clipboard", "reveal_or_open_file"].contains(call.name)
     }
 
     /// The one-line reply after a tool that worked, or nil to ask the model (errors, other languages, tools
@@ -720,7 +730,8 @@ final class AppModel: ObservableObject {
         case "open_app": return "Opened \(first.string("name"))."
         case "press_shortcut": return Reflex.reply(forKeys: first.string("keys")) ?? "Done."
         case "copy_to_clipboard": return "Copied."
-        case "press": return "Done."
+        case "press": return "Pressed \(Controls.label(from: results[0]) ?? "it")."
+        case "type_text": return first.arguments["submit"] as? Bool == false ? "Typed it." : "Done."
         case "reveal_or_open_file": return first.arguments["reveal"] as? Bool == true ? "There it is in Finder." : "Opened it."
         case "create_event": return "Added to your calendar."
         case "create_reminder": return "Reminder set."

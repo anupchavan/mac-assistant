@@ -13,6 +13,11 @@ struct ToolCall: Identifiable {
     var needsConfirm: Bool {
         if name == "press_shortcut" { return Tools.isDestructive(shortcut: string("keys")) }
         if name == "press" { return Controls.latest.value[Controls.id(self)]?.consequential ?? false }
+        // Typing into a search box is harmless; typing into anything else and sending it (a message, a form) asks first.
+        if name == "type_text" {
+            guard let c = Controls.latest.value[Controls.id(self)] else { return false }
+            return arguments["submit"] as? Bool != false && c.role != "search field" && c.label.range(of: #"(?i)search|find|filter|url|address"#, options: .regularExpression) == nil
+        }
         return ["create_event", "create_reminder", "move_files", "run_shortcut", "insert_text", "trim_and_merge_videos"].contains(name)
     }
 
@@ -27,6 +32,7 @@ struct ToolCall: Identifiable {
         case "insert_text": return "Insert"
         case "press_shortcut": return "Press \(Tools.symbols(string("keys")))"
         case "press": return "Press \(Controls.latest.value[Controls.id(self)]?.label ?? "It")"
+        case "type_text": return "Send"
         default: return "Run"
         }
     }
@@ -45,12 +51,14 @@ struct ToolCall: Identifiable {
         case "insert_text": return "Insert text into \(string("app").isEmpty ? "the focused field" : string("app"))"
         case "press_shortcut": return "Press \(Tools.symbols(string("keys")))\(string("app").isEmpty ? "" : " in \(string("app"))")"
         case "press": return "Press “\(Controls.latest.value[Controls.id(self)]?.label ?? "that")”"
+        case "type_text": return "Type into “\(Controls.latest.value[Controls.id(self)]?.label ?? "the field")” and send"
         default: return name
         }
     }
 
     var confirmDetail: String {
         switch name {
+        case "type_text": return String(string("text").prefix(160))
         case "create_event":
             return [Tools.humanDate(string("start")), string("end").isEmpty ? "" : "until \(Tools.humanDate(string("end")))"]
                 .filter { !$0.isEmpty }.joined(separator: " ")
@@ -75,6 +83,7 @@ struct ToolCall: Identifiable {
         case "web_search": return "Searching the web for “\(string("query"))”"
         case "open_url": return "Opening \(URL(string: string("url"))?.host ?? "the link")"
         case "press": return "Pressing “\(Controls.latest.value[Controls.id(self)]?.label ?? "it")”"
+        case "type_text": return "Typing “\(string("text"))”"
         case "close_tabs":
             let n = (arguments["urls"] as? [String])?.count ?? 0
             return "Closing \(n) tab\(n == 1 ? "" : "s")"
@@ -125,6 +134,9 @@ enum Tools {
                 "app": ["type": "string", "description": "App name; omit for the app the user is in"]], ["keys"]),
             fn("press", "Press a button, toggle, tab or menu listed in CONTROLS, by its id. Instant, no screenshot. Use it for clicks like follow, like, mute, play, a setting's switch, a toolbar button.",
                ["id": ["type": "integer", "description": "The id from CONTROLS"]], ["id"]),
+            fn("type_text", "Type into a text or search field listed in CONTROLS, by its id, replacing what's there; submit presses Return. Use it to search a site or app on screen (its search field), or fill one field.",
+               ["id": ["type": "integer", "description": "The id of a text field from CONTROLS"], "text": s,
+                "submit": ["type": "boolean", "description": "Press Return after typing (default true)"]], ["id", "text"]),
             fn("use_computer", "Do something on screen by clicking and typing (an agent that sees the window), only when no other tool fits: the target isn't in CONTROLS or PAGE_LINKS, or it needs typing or several steps. Slow (seconds per step).",
                ["task": ["type": "string", "description": "One clear English instruction naming the exact on-screen target"]], ["task"]),
         ]
@@ -180,6 +192,8 @@ enum Tools {
                 return "opened"
             case "press":
                 return await Controls.press(Controls.id(call), pid: pid)
+            case "type_text":
+                return await Controls.type(Controls.id(call), text: call.string("text"), submit: call.arguments["submit"] as? Bool ?? true, pid: pid)
             case "close_tabs":
                 return await BrowserTabs.close(matching: (call.arguments["urls"] as? [String]) ?? [], frontPid: pid)
             case "open_app":

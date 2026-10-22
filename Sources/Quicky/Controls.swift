@@ -28,8 +28,10 @@ enum Controls {
     static let roles: [String: String] = [
         "AXButton": "button", "AXCheckBox": "checkbox", "AXRadioButton": "radio", "AXPopUpButton": "popup",
         "AXMenuButton": "menu button", "AXDisclosureTriangle": "disclosure", "AXTab": "tab", "AXSwitch": "switch",
-        "AXToggle": "toggle", "AXComboBox": "combo box",
+        "AXToggle": "toggle", "AXComboBox": "combo box", "AXTextField": "text field", "AXTextArea": "text area",
+        "AXSearchField": "search field",
     ]
+    static let textRoles: Set<String> = ["text field", "text area", "combo box", "search field"]
 
     /// Visible controls of the focused window in reading order: native ones by a bounded walk, a web page's
     /// through WebKit/Chromium's control search (one call). Gives up quietly at the deadline.
@@ -81,13 +83,26 @@ enum Controls {
                       let v = values as? [Any], v.count == 5, let axRole = v[0] as? String, let role = roles[axRole] else { continue }
                 var label = [v[1], v[2], v[4]].compactMap { $0 as? String }
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.first { !$0.isEmpty } ?? ""
+                let subrole: String = ContextCapture.attr(el, kAXSubroleAttribute) ?? ""
+                if ["AXCloseButton", "AXMinimizeButton", "AXFullScreenButton", "AXZoomButton"].contains(subrole) { continue }
+                var kind = role
+                if subrole == "AXSearchField" { kind = "search field" }
+                if textRoles.contains(kind) {
+                    let placeholder: String = ContextCapture.attr(el, "AXPlaceholderValue") ?? ""
+                    let typed = (v[3] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                    label = [label, placeholder].first { !$0.isEmpty } ?? ""
+                    if !typed.isEmpty { label += label.isEmpty ? "“\(typed.prefix(40))”" : " (has “\(typed.prefix(40))”)" }
+                }
                 if label.isEmpty { label = childText(el) }
                 guard !label.isEmpty else { continue }
+                // Hidden parts (a closed find bar) still sit in the tree with no size.
+                let frame = ContextCapture.frame(of: el)
+                if let f = frame, f.width < 1 || f.height < 1 { continue }
                 label = String(label.replacingOccurrences(of: "\n", with: " ").prefix(60))
                 var state = ""
                 if ["checkbox", "switch", "toggle", "radio"].contains(role), let n = v[3] as? NSNumber { state = n.intValue == 0 ? "off" : "on" }
-                guard keys.insert("\(role)|\(label)").inserted else { continue }
-                controls.append(Control(id: controls.count + 1, role: role, label: label, state: state, element: el, frame: ContextCapture.frame(of: el)))
+                guard keys.insert("\(kind)|\(label)").inserted else { continue }
+                controls.append(Control(id: controls.count + 1, role: kind, label: label, state: state, element: el, frame: frame))
             }
             latest.value = Dictionary(uniqueKeysWithValues: controls.map { ($0.id, $0) })
             Log.info(String(format: "controls %d (of %d found) in %.0f ms", controls.count, found.count, Date().timeIntervalSince(t0) * 1000))
@@ -118,6 +133,47 @@ enum Controls {
         if let pid, let app = NSRunningApplication(processIdentifier: pid) { await MainActor.run { FocusMove.begin(); _ = app.activate() } }
         await ComputerUser.hidClick(at: CGPoint(x: f.midX, y: f.midY), count: 1, right: false, src: HotkeyMonitor.syntheticSource(.combinedSessionState))
         return "clicked \(c.role) “\(c.label)”"
+    }
+
+    /// "pressed button “Follow”" → "Follow".
+    static func label(from result: String) -> String? {
+        guard let a = result.firstIndex(of: "“"), let b = result.lastIndex(of: "”"), a < b else { return nil }
+        return String(result[result.index(after: a)..<b])
+    }
+
+    /// Focus a text field from CONTROLS, replace what's in it, and press Return when `submit`. Typed as key
+    /// events to the app (not AXValue), so web pages see real input events.
+    static func type(_ id: Int, text: String, submit: Bool, pid: pid_t?) async -> String {
+        guard let c = latest.value[id] else { return "error: no control \(id) on screen now" }
+        guard textRoles.contains(c.role) else { return "error: \(c.role) “\(c.label)” isn't a text field; use press" }
+        guard let pid else { return "error: no app to type into" }
+        AXUIElementSetMessagingTimeout(c.element, 0.3)
+        let focused = AXUIElementSetAttributeValue(c.element, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success
+        if !focused, let f = c.frame {
+            await ComputerUser.hidClick(at: CGPoint(x: f.midX, y: f.midY), count: 1, right: false, src: HotkeyMonitor.syntheticSource(.combinedSessionState))
+        }
+        try? await Task.sleep(nanoseconds: 60_000_000)
+        let src = HotkeyMonitor.syntheticSource(.combinedSessionState)
+        ComputerUser.pressKeys(["cmd", "a"], src: src, toPid: pid)
+        typeString(text, src: src, pid: pid)
+        if submit {
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            ComputerUser.pressKeys(["return"], src: src, toPid: pid)
+        }
+        return "typed “\(text.prefix(60))” into \(c.role) “\(c.label)”\(submit ? " and pressed Return" : "")"
+    }
+
+    private static func typeString(_ s: String, src: CGEventSource?, pid: pid_t) {
+        var units = Array(s.utf16)[...]
+        while !units.isEmpty {
+            let chunk = Array(units.prefix(16))
+            units = units.dropFirst(chunk.count)
+            for down in [true, false] {
+                let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: down)
+                e?.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: chunk)
+                e?.postToPid(pid)
+            }
+        }
     }
 
     static func id(_ call: ToolCall) -> Int {
