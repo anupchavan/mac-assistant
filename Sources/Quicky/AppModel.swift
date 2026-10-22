@@ -925,10 +925,16 @@ final class AppModel: ObservableObject {
     private func warmConnection() {
         guard Date().timeIntervalSince(lastWarm) > 20 else { return }
         lastWarm = Date()
-        var req = URLRequest(url: Sarvam.base)
-        req.httpMethod = "HEAD"
-        req.timeoutInterval = 3
-        URLSession.shared.dataTask(with: req).resume()
+        var hosts = [Sarvam.base]
+        // Gemini answers on Vertex in Mumbai; a cold TLS connection there cost 0.3-3 s on the first answer.
+        if Gemini.available, [Gemini.answerModel, Gemini.actionModel].contains(where: { $0.hasPrefix("gemini") }),
+           let vertex = URL(string: "https://\(Gemini.location)-aiplatform.googleapis.com/") { hosts.append(vertex) }
+        for url in hosts {
+            var req = URLRequest(url: url)
+            req.httpMethod = "HEAD"
+            req.timeoutInterval = 3
+            URLSession.shared.dataTask(with: req).resume()
+        }
     }
 
     private func startTTS(language: String?) {
